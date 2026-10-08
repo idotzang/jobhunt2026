@@ -141,7 +141,7 @@ The factory must be able to research its own behavior. Every agent run leaves a 
 - **Run record** — one JSON line per agent run, appended to `runs.jsonl` on a dedicated `factory-log` branch (git-native, permanent, readable by agents). Fields: `run_id`, `timestamp`, `skill`, `issue`, `pr`, `model`, `turns`, `duration_s`, token usage (when the action reports it), `outcome` (`pr_opened` / `fixed` / `asked_human` / `turn_limit` / `failed`), `retries`, gate results. Built by a plain workflow step from the action's execution output — no AI.
 - **Transcripts** — the full agent transcript for each run uploaded as a GitHub Actions artifact (retained per GitHub's artifact retention).
 - **Job summary** — a short human-readable summary on each workflow run page.
-- **Research** — `factory-report` skill (human-triggered via a `factory-report` issue) reads `runs.jsonl` and recent retro PRs and posts: success rate per skill, retries and turns per ticket, recurring Factory-feedback themes, model mix. It proposes `factory` tickets; it does not change anything itself.
+- **Research** — `factory-report` skill (human-triggered via a `factory-report` issue) reads `runs.jsonl` and recent retro PRs and posts: success rate per skill, retries and turns per ticket, recurring Factory-feedback themes, model mix. The report is posted as a **comment on that same issue** (markdown tables; trends as Mermaid charts, which GitHub renders natively). Each improvement it suggests is opened as a separate issue labelled `factory` + `proposed`, with evidence links — never `ai-build`. The owner approves a proposal by adding `ai-build` (or closes it). The skill changes nothing itself.
 - `factory-retro` also reads the run record of the PR it is examining.
 
 ### 6.2 App

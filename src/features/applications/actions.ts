@@ -19,4 +19,5 @@ export async function addApplication(formData: FormData) {
   await createApplication(parsed.data);
   log.info({ company: parsed.data.company }, "application created");
   revalidatePath("/");
+  redirect("/");
 }

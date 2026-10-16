@@ -983,6 +983,7 @@ gh repo create jobhunt2026 --public --source . --push
 - [ ] **Step 3: OWNER — Vercel + Neon**
   1. Sign in at vercel.com with GitHub → **Add New → Project** → import `jobhunt2026` → Framework: Next.js → **Deploy** (first deploy may fail without a DB; fine).
   2. In the project: **Storage → Create Database → Neon** → create a database and connect it to **Production, Preview, Development**. Enable **"Create database branch for deployment" for Preview** if offered. Confirm `DATABASE_URL` appears under **Settings → Environment Variables** (if the integration uses a different name, add `DATABASE_URL` pointing at the same value).
+     **Check:** the Preview and Development `DATABASE_URL` values must differ from Production (e2e writes rows, and previews run migrations). If Neon branching isn't available, create a separate Neon branch/database for Preview + Development and set `DATABASE_URL` for those environments to it.
   3. **Settings → Environment Variables**: add `APP_PASSWORD` (your choice) and `SESSION_SECRET` (run `openssl rand -hex 32` locally) for **all environments**.
   4. **Settings → Deployment Protection**: turn **Vercel Authentication off** for Preview (the app has its own password; CI must reach previews).
   5. **Deployments → Redeploy** the latest production deployment.
@@ -1439,6 +1440,7 @@ Single-user job-hunt app: Next.js 16 + Drizzle + Neon Postgres on Vercel. Built 
 - All work follows a skill in `.claude/skills/`. Read the relevant one before starting.
 - Skills are the factory's source of truth and are expected to improve.
 - If a skill was unclear, wrong, or missing something, say so in a "Factory feedback" section of your PR. Never silently work around it.
+- Migrations run before the build on deploy; keep them backward-compatible.
 ```
 
 Also create `docs/architecture.md` (one-page map the planner will maintain later):

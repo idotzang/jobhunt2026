@@ -36,6 +36,16 @@ describe("parseNewApplication", () => {
     expect(parseNewApplication(form({ ...valid, link: "not a url" })).success).toBe(false);
   });
 
+  it("rejects non-http(s) link schemes", () => {
+    expect(parseNewApplication(form({ ...valid, link: "javascript:alert(1)" })).success).toBe(false);
+    expect(parseNewApplication(form({ ...valid, link: "ftp://x.com" })).success).toBe(false);
+  });
+
+  it("accepts http and https links", () => {
+    expect(parseNewApplication(form({ ...valid, link: "http://x.com" })).success).toBe(true);
+    expect(parseNewApplication(form({ ...valid, link: "https://x.com" })).success).toBe(true);
+  });
+
   it("rejects a malformed date", () => {
     expect(parseNewApplication(form({ ...valid, appliedOn: "yesterday" })).success).toBe(false);
   });

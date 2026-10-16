@@ -1,14 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SESSION_COOKIE, authConfigFromEnv, isValidSession } from "@/lib/auth";
-import { REQUEST_ID_HEADER, newRequestId } from "@/lib/logger";
+import { SESSION_COOKIE, authConfigFromEnv, isPublicPath, isValidSession } from "@/lib/auth";
+import { REQUEST_ID_HEADER, newRequestId } from "@/lib/request-id";
 
-const PUBLIC_PATHS = ["/login", "/api/health"];
 const REQUEST_ID_PATTERN = /^[\w-]{1,64}$/;
 
 export async function proxy(request: NextRequest) {
   const incoming = request.headers.get(REQUEST_ID_HEADER);
   const requestId = incoming && REQUEST_ID_PATTERN.test(incoming) ? incoming : newRequestId();
-  const isPublic = PUBLIC_PATHS.some((p) => request.nextUrl.pathname.startsWith(p));
+  const isPublic = isPublicPath(request.nextUrl.pathname);
   const cookie = request.cookies.get(SESSION_COOKIE)?.value;
 
   if (!isPublic && !(await isValidSession(cookie, authConfigFromEnv()))) {

@@ -1,10 +1,6 @@
 import pino from "pino";
 
-export const REQUEST_ID_HEADER = "x-request-id";
-
-export function newRequestId(): string {
-  return crypto.randomUUID();
-}
+export { REQUEST_ID_HEADER, newRequestId } from "./request-id";
 
 export function createLogger(destination?: pino.DestinationStream): pino.Logger {
   const options: pino.LoggerOptions = {

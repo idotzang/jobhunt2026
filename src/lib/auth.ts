@@ -35,3 +35,9 @@ export async function isValidSession(cookie: string | undefined, config: AuthCon
   if (!cookie || !config.password || !config.secret) return false;
   return safeEqual(cookie, await sessionToken(config.password, config.secret));
 }
+
+const PUBLIC_PATHS = ["/login", "/api/health"];
+
+export function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}

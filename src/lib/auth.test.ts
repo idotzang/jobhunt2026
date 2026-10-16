@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkPassword, isValidSession, safeEqual, sessionToken } from "./auth";
+import { checkPassword, isPublicPath, isValidSession, safeEqual, sessionToken } from "./auth";
 
 const config = { password: "hunter2", secret: "s3cret" };
 
@@ -48,5 +48,14 @@ describe("isValidSession", () => {
   it("fails closed when not configured", async () => {
     const token = await sessionToken("hunter2", "s3cret");
     expect(await isValidSession(token, {})).toBe(false);
+  });
+});
+
+describe("isPublicPath", () => {
+  it.each(["/login", "/login/x", "/api/health", "/api/health/x"])("%s is public", (p) => {
+    expect(isPublicPath(p)).toBe(true);
+  });
+  it.each(["/loginfoo", "/api/healthz", "/", "/api/health-details"])("%s is not public", (p) => {
+    expect(isPublicPath(p)).toBe(false);
   });
 });

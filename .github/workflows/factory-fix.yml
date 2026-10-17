@@ -23,26 +23,42 @@ jobs:
     concurrency:
       group: factory-agent
       cancel-in-progress: false
+    # GH_TOKEN (the PAT) is set per step, only where gh needs it, never for
+    # npm or the agent's install step.
     env:
-      GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
       REPO: ${{ github.repository }}
+      OWNER: ${{ github.repository_owner }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       SHA: ${{ github.event.workflow_run.head_sha }}
       FAILED_RUN: ${{ github.event.workflow_run.html_url }}
     steps:
       # Reads PR metadata only; never checks out or runs PR-controlled code.
       # Commit -> PR lookup via the commits API (reliable for open PRs, unlike
       # `gh pr list --search <sha>`, which the gh docs show for merged PRs).
-      # Acts only on an open PR whose head branch is ai/* and whose head SHA is
-      # exactly the failed run's SHA (stale-event protection), and which is not
-      # already labelled needs-human.
+      # Acts only on an open PR that (a) lives in THIS repo (not a fork),
+      # (b) was authored by the repository owner, (c) has an ai/* head branch,
+      # (d) whose head SHA is exactly the failed run's SHA (stale-event
+      # protection). A stranger's PR from a branch named ai/x never reaches
+      # the PAT-holding agent. API errors skip loudly, distinct from "no PR".
       - name: Locate agent PR for this commit
         id: pr
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
         run: |
-          pr=$(gh api "repos/$REPO/commits/$SHA/pulls" --paginate \
-            --jq '.[] | select(.state == "open" and (.head.ref | startswith("ai/")) and .head.sha == env.SHA) | {number, branch: .head.ref, labels: [.labels[].name]}' \
-            | head -n 1)
+          if ! raw=$(gh api "repos/$REPO/commits/$SHA/pulls" --paginate); then
+            echo "::warning::GitHub API lookup of PRs for $SHA failed; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr=$(jq -c --arg sha "$SHA" --arg repo "$REPO" --arg owner "$OWNER" \
+            '.[] | select(.state == "open"
+                and (.head.ref | startswith("ai/"))
+                and .head.sha == $sha
+                and .head.repo != null and .head.repo.full_name == $repo
+                and .user.login == $owner)
+              | {number, branch: .head.ref, labels: [.labels[].name]}' <<<"$raw" | head -n 1)
           if [ -z "$pr" ]; then
-            echo "No open ai/ PR with head $SHA; skipping."
+            echo "No open same-repo owner ai/ PR with head $SHA; skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -59,24 +75,49 @@ jobs:
       - name: Give up and ask a human
         if: steps.pr.outputs.skip == 'false' && steps.pr.outputs.attempts >= 2 && steps.pr.outputs.needs_human == '0'
         env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           NUMBER: ${{ steps.pr.outputs.number }}
         run: |
           gh label create needs-human --repo "$REPO" --color B60205 2>/dev/null || true
           gh pr edit "$NUMBER" --repo "$REPO" --add-label needs-human
           gh pr comment "$NUMBER" --repo "$REPO" \
             --body "Gates still failing after 2 automatic fix attempts — needs a human look. Failed run: $FAILED_RUN"
+      # Adding a label re-triggers CI on the SAME sha; without this check a
+      # failing CI would burn attempt N+1 on an unchanged commit. Each attempt
+      # leaves a `fix-attempt-sha:<sha>` PR comment; fail closed on API errors.
+      - name: Check this sha was not already attempted
+        id: fresh
+        if: steps.pr.outputs.skip == 'false' && steps.pr.outputs.attempts < 2 && steps.pr.outputs.needs_human == '0'
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          if ! bodies=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq '.[].body'); then
+            echo "::warning::Could not read PR comments; skipping fix attempt (fail closed)."
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -qF "fix-attempt-sha:$SHA" <<<"$bodies"; then
+            echo "::notice::Head $SHA was already attempted; skipping."
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "fresh=true" >> "$GITHUB_OUTPUT"
+          fi
       # The label is added BEFORE the skill runs: the workflow, not the skill,
       # enforces the cap of 2 attempts.
       - name: Mark attempt
         id: attempt
-        if: steps.pr.outputs.skip == 'false' && steps.pr.outputs.attempts < 2 && steps.pr.outputs.needs_human == '0'
+        if: steps.fresh.outputs.fresh == 'true'
         env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           NUMBER: ${{ steps.pr.outputs.number }}
           ATTEMPTS: ${{ steps.pr.outputs.attempts }}
         run: |
           n=$(( ATTEMPTS + 1 ))
           gh label create "fix-attempt-$n" --repo "$REPO" --color FBCA04 2>/dev/null || true
           gh pr edit "$NUMBER" --repo "$REPO" --add-label "fix-attempt-$n"
+          gh pr comment "$NUMBER" --repo "$REPO" \
+            --body "Automatic fix attempt $n for failed run $FAILED_RUN. fix-attempt-sha:$SHA"
           echo "n=$n" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         if: steps.attempt.outcome == 'success'
@@ -87,13 +128,36 @@ jobs:
           # record-run.sh pushes to factory-log using them.
           token: ${{ secrets.FACTORY_GH_TOKEN }}
           persist-credentials: true
+      # A push may have landed between the failure and now.
+      - name: Verify checkout is the failed commit
+        if: steps.attempt.outcome == 'success'
+        run: |
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::Branch moved: checked out $head but the failed run was for $SHA. Aborting."
+            exit 1
+          fi
+      # Earlier agent attempts could have tampered with the skill, its scripts
+      # or the workflows. Replace those paths with the default branch's copies
+      # before anything is loaded or executed (rm first, so PR-only files in
+      # those dirs disappear too). The restores are then marked skip-worktree
+      # so the agent's `git add -A` does not commit them into the PR.
+      - name: Restore trusted factory paths from the default branch
+        if: steps.attempt.outcome == 'success'
+        run: |
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          rm -rf .claude scripts/factory .github
+          git checkout "origin/$DEFAULT_BRANCH" -- .claude scripts/factory .github
+          git reset -q
+          git diff --name-only -z | xargs -0 -r git update-index --skip-worktree
+          git status --short
       - uses: actions/setup-node@v5
         if: steps.attempt.outcome == 'success'
         with:
           node-version: 22
           cache: npm
       - if: steps.attempt.outcome == 'success'
-        run: npm ci
+        run: npm ci --ignore-scripts
       - id: claude
         if: steps.attempt.outcome == 'success'
         uses: anthropics/claude-code-action@v1
@@ -109,6 +173,7 @@ jobs:
       - name: Record run
         if: always() && steps.attempt.outcome == 'success'
         env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
           SKILL: implement-ticket
@@ -118,8 +183,9 @@ jobs:
           RETRY: ${{ steps.attempt.outputs.n }}
         run: bash scripts/factory/record-run.sh
       - uses: actions/upload-artifact@v5
-        if: always() && steps.attempt.outcome == 'success'
+        if: always() && steps.attempt.outcome == 'success' && steps.claude.outputs.execution_file != ''
         with:
+          retention-days: 7
           name: transcript-${{ github.run_id }}
           path: ${{ steps.claude.outputs.execution_file }}
           if-no-files-found: ignore

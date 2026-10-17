@@ -7,12 +7,22 @@ export const MODELS = {
 };
 
 export function pickModel(labels) {
+  const list = Array.isArray(labels) ? labels : [];
   for (const tier of ["opus", "sonnet", "haiku"]) {
-    if (labels.includes(`model:${tier}`)) return MODELS[tier];
+    if (list.includes(`model:${tier}`)) return MODELS[tier];
   }
   return MODELS.sonnet;
 }
 
+function labelsFromEnv(raw) {
+  try {
+    const parsed = JSON.parse(raw ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  console.log(pickModel(JSON.parse(process.env.LABELS ?? "[]")));
+  console.log(pickModel(labelsFromEnv(process.env.LABELS)));
 }

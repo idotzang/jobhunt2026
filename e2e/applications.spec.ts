@@ -22,7 +22,12 @@ test("wrong password is rejected", async ({ page }) => {
 });
 
 test("sign in, add an application, see it in the list", async ({ page }) => {
-  test.skip(!password, "E2E_PASSWORD not set");
+  // Locally a missing password skips; in CI it must fail, or a missing secret would pass silently.
+  if (process.env.CI) {
+    expect(password, "E2E_PASSWORD must be set in CI").toBeTruthy();
+  } else {
+    test.skip(!password, "E2E_PASSWORD not set");
+  }
   const company = `Acme ${Date.now()}`;
 
   await page.goto("/login");

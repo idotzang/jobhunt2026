@@ -33,7 +33,6 @@ jobs:
       group: factory-agent
       cancel-in-progress: false
     env:
-      GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
       ISSUE: ${{ github.event.issue.number }}
     steps:
       - id: start
@@ -49,13 +48,16 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - id: model
         env:
           LABELS: ${{ toJson(github.event.issue.labels.*.name) }}
         run: echo "model=$(node scripts/factory/pick-model.mjs)" >> "$GITHUB_OUTPUT"
       - id: claude
         uses: anthropics/claude-code-action@v1
+        # The skill runs gh heavily; export the PAT explicitly to it.
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.FACTORY_GH_TOKEN }}
@@ -69,6 +71,7 @@ jobs:
         id: pr
         if: always()
         env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           STARTED_AT: ${{ steps.start.outputs.at }}
         run: |
           pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --json number,headRefName,createdAt \
@@ -77,6 +80,7 @@ jobs:
       - name: Record run
         if: always() && hashFiles('scripts/factory/record-run.sh') != ''
         env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
           SKILL: implement-ticket

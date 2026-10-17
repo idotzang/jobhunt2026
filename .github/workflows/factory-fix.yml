@@ -82,29 +82,47 @@ jobs:
           gh pr edit "$NUMBER" --repo "$REPO" --add-label needs-human
           gh pr comment "$NUMBER" --repo "$REPO" \
             --body "Gates still failing after 2 automatic fix attempts — needs a human look. Failed run: $FAILED_RUN"
-      # Adding a label re-triggers CI on the SAME sha; without this check a
-      # failing CI would burn attempt N+1 on an unchanged commit. Each attempt
-      # leaves a `fix-attempt-sha:<sha>` PR comment; fail closed on API errors.
-      - name: Check this sha was not already attempted
+      # Adding a label re-triggers CI on the SAME sha, which queues a second
+      # event behind the running agent. Each attempt leaves an owner-authored
+      # `fix-attempt-sha:<sha>` comment. Seeing it again for the same head sha
+      # (with an attempt label already present) means the agent pushed nothing:
+      # escalate instead of burning another attempt. Fail closed on API errors.
+      - name: Check whether this sha was already attempted
         id: fresh
         if: steps.pr.outputs.skip == 'false' && steps.pr.outputs.attempts < 2 && steps.pr.outputs.needs_human == '0'
         env:
           GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           NUMBER: ${{ steps.pr.outputs.number }}
+          ATTEMPTS: ${{ steps.pr.outputs.attempts }}
         run: |
-          if ! bodies=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate --jq '.[].body'); then
+          if ! raw=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate); then
             echo "::warning::Could not read PR comments; skipping fix attempt (fail closed)."
-            echo "fresh=false" >> "$GITHUB_OUTPUT"
+            echo "fresh=skip" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if grep -qF "fix-attempt-sha:$SHA" <<<"$bodies"; then
-            echo "::notice::Head $SHA was already attempted; skipping."
-            echo "fresh=false" >> "$GITHUB_OUTPUT"
+          bodies=$(jq -r --arg owner "$OWNER" '.[] | select(.user.login == $owner) | .body' <<<"$raw")
+          if grep -qE "fix-attempt-sha:$SHA([^0-9a-f]|$)" <<<"$bodies"; then
+            if [ "$ATTEMPTS" -ge 1 ]; then
+              echo "fresh=noprogress" >> "$GITHUB_OUTPUT"
+            else
+              echo "fresh=skip" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "fresh=true" >> "$GITHUB_OUTPUT"
           fi
-      # The label is added BEFORE the skill runs: the workflow, not the skill,
-      # enforces the cap of 2 attempts.
+      - name: Escalate a fix attempt that made no progress
+        if: steps.fresh.outputs.fresh == 'noprogress'
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          gh label create needs-human --repo "$REPO" --color B60205 2>/dev/null || true
+          gh pr edit "$NUMBER" --repo "$REPO" --add-label needs-human
+          gh pr comment "$NUMBER" --repo "$REPO" \
+            --body "Fix attempt made no progress on $SHA; needs a human. Failed run: $FAILED_RUN"
+      # The marker comment is posted BEFORE the label: if posting fails the
+      # step aborts without consuming an attempt. The label is added BEFORE the
+      # skill runs: the workflow, not the skill, enforces the cap of 2.
       - name: Mark attempt
         id: attempt
         if: steps.fresh.outputs.fresh == 'true'
@@ -114,10 +132,10 @@ jobs:
           ATTEMPTS: ${{ steps.pr.outputs.attempts }}
         run: |
           n=$(( ATTEMPTS + 1 ))
-          gh label create "fix-attempt-$n" --repo "$REPO" --color FBCA04 2>/dev/null || true
-          gh pr edit "$NUMBER" --repo "$REPO" --add-label "fix-attempt-$n"
           gh pr comment "$NUMBER" --repo "$REPO" \
             --body "Automatic fix attempt $n for failed run $FAILED_RUN. fix-attempt-sha:$SHA"
+          gh label create "fix-attempt-$n" --repo "$REPO" --color FBCA04 2>/dev/null || true
+          gh pr edit "$NUMBER" --repo "$REPO" --add-label "fix-attempt-$n"
           echo "n=$n" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         if: steps.attempt.outcome == 'success'
@@ -137,30 +155,44 @@ jobs:
             echo "::error::Branch moved: checked out $head but the failed run was for $SHA. Aborting."
             exit 1
           fi
-      # Earlier agent attempts could have tampered with the skill, its scripts
-      # or the workflows. Replace those paths with the default branch's copies
-      # before anything is loaded or executed (rm first, so PR-only files in
-      # those dirs disappear too). The restores are then marked skip-worktree
-      # so the agent's `git add -A` does not commit them into the PR.
-      - name: Restore trusted factory paths from the default branch
+      # Diff gate, before any PR-controlled code runs (npm ci, the agent). The
+      # agent PR must not change the factory itself or the test/lint/deploy
+      # config. Three-dot = diff from the merge base, so a branch that is
+      # merely behind the default branch passes. Hits are handed to a human;
+      # the job does not fail, and every later step is skipped via gate.ok.
+      - name: Gate protected paths
+        id: gate
         if: steps.attempt.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          NUMBER: ${{ steps.pr.outputs.number }}
         run: |
-          git fetch --no-tags origin "$DEFAULT_BRANCH"
-          rm -rf .claude scripts/factory .github
-          git checkout "origin/$DEFAULT_BRANCH" -- .claude scripts/factory .github
-          git reset -q
-          git diff --name-only -z | xargs -0 -r git update-index --skip-worktree
-          git status --short
+          git fetch --no-tags origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          files=$(git diff --name-only "origin/$DEFAULT_BRANCH...HEAD" -- \
+            .claude scripts/factory .github CLAUDE.md AGENTS.md \
+            vitest.config.mts playwright.config.ts eslint.config.mjs vercel.json)
+          if [ -z "$files" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          gh label create needs-human --repo "$REPO" --color B60205 2>/dev/null || true
+          gh pr edit "$NUMBER" --repo "$REPO" --add-label needs-human
+          gh pr comment "$NUMBER" --repo "$REPO" \
+            --body "Agent PR touches protected paths; needs a human. No automatic fix was run. Files: $(head -n 20 <<<"$files" | sed 's/.*/`&`/' | tr '\n' ' ')"
       - uses: actions/setup-node@v5
-        if: steps.attempt.outcome == 'success'
+        if: steps.gate.outputs.ok == 'true'
         with:
           node-version: 22
           cache: npm
-      - if: steps.attempt.outcome == 'success'
+      - if: steps.gate.outputs.ok == 'true'
         run: npm ci --ignore-scripts
       - id: claude
-        if: steps.attempt.outcome == 'success'
+        if: steps.gate.outputs.ok == 'true'
         uses: anthropics/claude-code-action@v1
+        # The skill runs gh heavily; export the PAT explicitly to it.
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.FACTORY_GH_TOKEN }}
@@ -171,7 +203,7 @@ jobs:
             --max-turns 40
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
       - name: Record run
-        if: always() && steps.attempt.outcome == 'success'
+        if: always() && steps.gate.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
@@ -183,7 +215,7 @@ jobs:
           RETRY: ${{ steps.attempt.outputs.n }}
         run: bash scripts/factory/record-run.sh
       - uses: actions/upload-artifact@v5
-        if: always() && steps.attempt.outcome == 'success' && steps.claude.outputs.execution_file != ''
+        if: always() && steps.gate.outputs.ok == 'true' && steps.claude.outputs.execution_file != ''
         with:
           retention-days: 7
           name: transcript-${{ github.run_id }}

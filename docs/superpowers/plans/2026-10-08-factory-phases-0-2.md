@@ -2088,7 +2088,7 @@ In a terminal: `claude setup-token`, then `gh secret set CLAUDE_CODE_OAUTH_TOKEN
 
 - [ ] **Step 2: OWNER — factory GitHub token** (PRs made with the default Actions token don't trigger CI; this token makes agent PRs run the gates)
 
-github.com → Settings → Developer settings → **Fine-grained tokens** → Generate: repository access **only `jobhunt2026`**; permissions **Contents, Issues, Pull requests, Workflows: Read and write**; **Actions, Checks: Read**. Then `gh secret set FACTORY_GH_TOKEN` and paste it.
+github.com → Settings → Developer settings → **Fine-grained tokens** → Generate: repository access **only `jobhunt2026`**; permissions **Contents, Issues, Pull requests: Read and write**; **Commit statuses, Actions, Checks: Read**; do NOT grant Workflows. Rationale: the skill reads the e2e commit status, and nothing legitimate edits `.github/` (the skill and the protected-path gate forbid it), so a leaked token must not be able to rewrite workflows. Then `gh secret set FACTORY_GH_TOKEN` and paste it.
 
 - [ ] **Step 3: Create labels**
 
@@ -2113,7 +2113,7 @@ EOF
 )" --label model:haiku
 ```
 
-Then **OWNER** adds the `ai-build` label in the GitHub UI (the approval event).
+Create the labels (Step 3) FIRST and apply `model:haiku` when the issue is created, then **OWNER** adds `ai-build` LAST in the GitHub UI (the approval event; the model is read from the event payload, so `model:haiku` must already be there).
 
 - [ ] **Step 5: Verify end-to-end**
 

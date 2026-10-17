@@ -1,0 +1,2 @@
+# Fake fixture secret used by the transcript-redaction unit tests (not a real credential).
+1a12763b9dc6dbff4b3f83a62cbff38fe0d8d28f:scripts/factory/redact-transcript.test.mjs:generic-api-key:11

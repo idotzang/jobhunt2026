@@ -1,0 +1,21 @@
+name: Task
+description: One PR-sized change. Add the ai-build label to start the worker.
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What
+      description: The change, as an outcome (not an implementation).
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: One per line. Each becomes at least one test.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes

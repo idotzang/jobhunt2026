@@ -1,0 +1,33 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Tests-with-code + protected-paths gate
+        if: github.event_name == 'pull_request'
+        env:
+          SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-tests-check') }}
+          FACTORY_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'factory') }}
+          BRANCH: ${{ github.head_ref }}
+        run: node scripts/factory/tests-with-code.mjs origin/${{ github.base_ref }}

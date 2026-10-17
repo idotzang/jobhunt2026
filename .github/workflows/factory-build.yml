@@ -1,3 +1,10 @@
+# Notes:
+# - Concurrency keeps only one pending run per group: if a third ticket is
+#   queued while one runs and one waits, the oldest pending run is cancelled.
+#   Remove and re-add `ai-build` on that ticket.
+# - A `model:*` label must already be on the issue when `ai-build` is applied
+#   (the model is read from the event payload).
+# - Re-labelling after an ask-for-help requires removing and re-adding `ai-build`.
 name: Factory · build
 on:
   issues:
@@ -16,7 +23,8 @@ jobs:
     # Only the repository owner's label event starts the worker.
     if: >-
       github.event.label.name == 'ai-build' &&
-      github.event.sender.login == github.repository_owner
+      github.event.sender.login == github.repository_owner &&
+      github.event.issue.author_association == 'OWNER'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Job-level on purpose: a workflow-level group is claimed before the job
@@ -28,6 +36,8 @@ jobs:
       GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
       ISSUE: ${{ github.event.issue.number }}
     steps:
+      - id: start
+        run: echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -58,12 +68,14 @@ jobs:
       - name: Find PR
         id: pr
         if: always()
+        env:
+          STARTED_AT: ${{ steps.start.outputs.at }}
         run: |
-          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --json number,headRefName \
-            -q "map(select(.headRefName | startswith(\"ai/issue-$ISSUE-\"))) | .[0].number // empty" || true)
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --json number,headRefName,createdAt \
+            -q "map(select((.headRefName | startswith(\"ai/issue-$ISSUE-\")) and .createdAt >= \"$STARTED_AT\")) | .[0].number // empty" || true)
           echo "number=$pr" >> "$GITHUB_OUTPUT"
       - name: Record run
-        if: always()
+        if: always() && hashFiles('scripts/factory/record-run.sh') != ''
         env:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
@@ -73,8 +85,9 @@ jobs:
           PR: ${{ steps.pr.outputs.number }}
         run: bash scripts/factory/record-run.sh
       - uses: actions/upload-artifact@v5
-        if: always()
+        if: always() && steps.claude.outputs.execution_file != ''
         with:
+          retention-days: 7
           name: transcript-${{ github.run_id }}
           path: ${{ steps.claude.outputs.execution_file }}
           if-no-files-found: ignore

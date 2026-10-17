@@ -84,8 +84,16 @@ jobs:
           MODEL: ${{ steps.model.outputs.model }}
           PR: ${{ steps.pr.outputs.number }}
         run: bash scripts/factory/record-run.sh
-      - uses: actions/upload-artifact@v5
+      - name: Redact secrets from transcript
+        id: redact
         if: always() && steps.claude.outputs.execution_file != ''
+        env:
+          FACTORY_GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: node scripts/factory/redact-transcript.mjs "$EXECUTION_FILE"
+      - uses: actions/upload-artifact@v5
+        if: always() && steps.claude.outputs.execution_file != '' && steps.redact.outcome == 'success'
         with:
           retention-days: 7
           name: transcript-${{ github.run_id }}

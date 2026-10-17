@@ -1,0 +1,52 @@
+name: E2E
+on: deployment_status
+permissions:
+  contents: read
+  issues: write
+jobs:
+  e2e:
+    name: e2e
+    if: github.event.deployment_status.state == 'success' && github.event.deployment.environment != 'Production'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.deployment.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+        env:
+          CI: "true"
+          BASE_URL: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: playwright-report/
+
+  prod-health:
+    name: prod-health
+    if: github.event.deployment_status.state == 'success' && github.event.deployment.environment == 'Production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check /api/health
+        id: health
+        env:
+          URL: ${{ github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
+        run: curl --fail --silent --show-error --retry 3 --retry-delay 10 "$URL/api/health"
+      - name: Open issue on failure
+        if: failure() && steps.health.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.deployment.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$REPO" --label bug \
+            --title "Production health check failed ($SHA)" \
+            --body "Post-deploy health check failed. Run: $RUN_URL"

@@ -32,10 +32,21 @@ jobs:
           SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-tests-check') }}
           FACTORY_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'factory') }}
         run: |
+          set -euo pipefail
+          # Any git failure below must fail the step; only a confirmed-absent gate file skips.
+          if ! git cat-file -e "origin/$BASE^{commit}"; then
+            echo "::error::base ref origin/$BASE does not exist"
+            exit 1
+          fi
           # Run the gate from the BASE branch's copy so a PR cannot weaken its own check.
-          # Bootstrap: if the base branch has no gate yet, skip rather than fail.
-          if ! git show "origin/$BASE:scripts/factory/tests-with-code.mjs" > "$RUNNER_TEMP/tests-with-code.mjs" 2>/dev/null; then
+          if ! git cat-file -e "origin/$BASE:scripts/factory/tests-with-code.mjs" 2>/dev/null; then
+            listing=$(git ls-tree -r --name-only "origin/$BASE" -- scripts/factory/tests-with-code.mjs)
+            if [ -n "$listing" ]; then
+              echo "::error::gate file is listed on origin/$BASE but cannot be read"
+              exit 1
+            fi
             echo "::notice::tests-with-code gate not on origin/$BASE yet (bootstrap); skipping"
             exit 0
           fi
+          git show "origin/$BASE:scripts/factory/tests-with-code.mjs" > "$RUNNER_TEMP/tests-with-code.mjs"
           node "$RUNNER_TEMP/tests-with-code.mjs" "origin/$BASE"

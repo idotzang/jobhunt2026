@@ -991,8 +991,10 @@ gh repo create jobhunt2026 --public --source . --push
 - [ ] **Step 4: Pull env locally and run everything against the dev branch**
 
 ```bash
-npx vercel link --yes
-npx vercel env pull .env.local --environment=development
+# Create a Neon branch `dev` (auto-delete: never) in the Neon console and put its pooled
+# connection string in .env.local as DATABASE_URL, with a locally generated APP_PASSWORD and
+# SESSION_SECRET. (The Neon integration is not connected to Vercel's Development environment,
+# so `vercel env pull` would not give an isolated database.)
 npm run db:migrate
 npm run test:e2e
 ```

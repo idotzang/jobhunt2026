@@ -1,0 +1,52 @@
+name: CI
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Tests-with-code + protected-paths gate
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.base_ref }}
+          SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-tests-check') }}
+          FACTORY_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'factory') }}
+        run: |
+          set -euo pipefail
+          # Any git failure below must fail the step; only a confirmed-absent gate file skips.
+          if ! git cat-file -e "origin/$BASE^{commit}"; then
+            echo "::error::base ref origin/$BASE does not exist"
+            exit 1
+          fi
+          # Run the gate from the BASE branch's copy so a PR cannot weaken its own check.
+          if ! git cat-file -e "origin/$BASE:scripts/factory/tests-with-code.mjs" 2>/dev/null; then
+            listing=$(git ls-tree -r --name-only "origin/$BASE" -- scripts/factory/tests-with-code.mjs)
+            if [ -n "$listing" ]; then
+              echo "::error::gate file is listed on origin/$BASE but cannot be read"
+              exit 1
+            fi
+            echo "::notice::tests-with-code gate not on origin/$BASE yet (bootstrap); skipping"
+            exit 0
+          fi
+          git show "origin/$BASE:scripts/factory/tests-with-code.mjs" > "$RUNNER_TEMP/tests-with-code.mjs"
+          node "$RUNNER_TEMP/tests-with-code.mjs" "origin/$BASE"

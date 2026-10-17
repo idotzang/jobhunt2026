@@ -1,0 +1,80 @@
+name: Factory · build
+on:
+  issues:
+    types: [labeled]
+
+# GITHUB_TOKEN stays read-only: the agent pushes branches, opens PRs and edits
+# issues with FACTORY_GH_TOKEN (a PAT), not with GITHUB_TOKEN. id-token is not
+# requested: claude-code-action only needs OIDC for its default GitHub App auth
+# and for federation, and we pass github_token plus an OAuth token instead.
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  build:
+    # Only the repository owner's label event starts the worker.
+    if: >-
+      github.event.label.name == 'ai-build' &&
+      github.event.sender.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Job-level on purpose: a workflow-level group is claimed before the job
+    # `if` is evaluated, so unrelated label events would cancel a pending run.
+    concurrency:
+      group: factory-agent
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+      ISSUE: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # Credentials must persist: the agent pushes its branch and
+          # record-run.sh pushes to factory-log using them.
+          token: ${{ secrets.FACTORY_GH_TOKEN }}
+          persist-credentials: true
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - id: model
+        env:
+          LABELS: ${{ toJson(github.event.issue.labels.*.name) }}
+        run: echo "model=$(node scripts/factory/pick-model.mjs)" >> "$GITHUB_OUTPUT"
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.FACTORY_GH_TOKEN }}
+          # Issue number is numeric, taken from the event payload.
+          prompt: "/implement-ticket ${{ github.event.issue.number }}"
+          claude_args: >-
+            --model ${{ steps.model.outputs.model }}
+            --max-turns 80
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+      - name: Find PR
+        id: pr
+        if: always()
+        run: |
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --state all --json number,headRefName \
+            -q "map(select(.headRefName | startswith(\"ai/issue-$ISSUE-\"))) | .[0].number // empty" || true)
+          echo "number=$pr" >> "$GITHUB_OUTPUT"
+      - name: Record run
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          CONCLUSION: ${{ steps.claude.outputs.conclusion }}
+          SKILL: implement-ticket
+          MODE: build
+          MODEL: ${{ steps.model.outputs.model }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: bash scripts/factory/record-run.sh
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: transcript-${{ github.run_id }}
+          path: ${{ steps.claude.outputs.execution_file }}
+          if-no-files-found: ignore

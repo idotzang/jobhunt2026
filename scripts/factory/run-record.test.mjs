@@ -92,6 +92,13 @@ describe("buildRunRecord", () => {
       duration_s: 184,
       input_tokens: 120000,
       output_tokens: 9000,
+      cost_usd: null,
+      cost_basis: null,
+      cache_read_tokens: null,
+      cache_creation_tokens: null,
+      thinking_tokens: null,
+      api_duration_s: null,
+      model_usage: {},
       outcome: "pr_opened",
       retries: 0,
     });
@@ -126,6 +133,13 @@ describe("buildRunRecord", () => {
       duration_s: null,
       input_tokens: null,
       output_tokens: null,
+      cost_usd: null,
+      cost_basis: null,
+      cache_read_tokens: null,
+      cache_creation_tokens: null,
+      thinking_tokens: null,
+      api_duration_s: null,
+      model_usage: {},
       outcome: "failed",
       retries: 0,
     });
@@ -165,5 +179,145 @@ describe("buildRunRecord", () => {
   it("reads RETRY when it is a plain integer", () => {
     const record = buildRunRecord({ executionLog: [], env: { RETRY: "2" }, now: new Date(0) });
     expect(record.retries).toBe(2);
+  });
+
+  describe("cost and usage", () => {
+    const build = (res) =>
+      buildRunRecord({ executionLog: res ? [res] : [], env: { CONCLUSION: "success", MODE: "build", PR: "1" }, now: new Date(0) });
+    const realResult = {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      num_turns: 17,
+      duration_ms: 48075,
+      duration_api_ms: 37620,
+      total_cost_usd: 0.01246652,
+      usage: {
+        input_tokens: 30,
+        cache_read_input_tokens: 439432,
+        cache_creation_input_tokens: 23681,
+        output_tokens: 6666,
+        output_tokens_details: { thinking_tokens: 2007 },
+      },
+      modelUsage: {
+        "claude-sonnet-5-5": {
+          inputTokens: 30,
+          outputTokens: 6666,
+          cacheReadInputTokens: 439432,
+          cacheCreationInputTokens: 23681,
+          thinkingTokens: 2007,
+          costUSD: 0.01246652,
+          costBasis: "list",
+        },
+      },
+    };
+    const newFields = (r) => ({
+      cost_usd: r.cost_usd,
+      cost_basis: r.cost_basis,
+      cache_read_tokens: r.cache_read_tokens,
+      cache_creation_tokens: r.cache_creation_tokens,
+      thinking_tokens: r.thinking_tokens,
+      api_duration_s: r.api_duration_s,
+      model_usage: r.model_usage,
+    });
+
+    it("captures cost, cache, thinking and per-model usage from a real-shaped result", () => {
+      const r = build(realResult);
+      expect(newFields(r)).toEqual({
+        cost_usd: 0.012467,
+        cost_basis: "list",
+        cache_read_tokens: 439432,
+        cache_creation_tokens: 23681,
+        thinking_tokens: 2007,
+        api_duration_s: 37.6,
+        model_usage: {
+          "claude-sonnet-5-5": {
+            cost_usd: 0.012467,
+            input_tokens: 30,
+            output_tokens: 6666,
+            cache_read_tokens: 439432,
+            cache_creation_tokens: 23681,
+          },
+        },
+      });
+      expect(r.turns).toBe(17);
+      expect(r.duration_s).toBe(48);
+      expect(r.input_tokens).toBe(30);
+      expect(r.output_tokens).toBe(6666);
+    });
+
+    it("reports nulls when usage is missing", () => {
+      const r = build({ type: "result", subtype: "success", num_turns: 2, duration_ms: 1000 });
+      expect(newFields(r)).toEqual({
+        cost_usd: null,
+        cost_basis: null,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        thinking_tokens: null,
+        api_duration_s: null,
+        model_usage: {},
+      });
+    });
+
+    it("maps every model in modelUsage", () => {
+      const r = build({
+        ...realResult,
+        modelUsage: {
+          a: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, costUSD: 0.5, costBasis: "list" },
+          b: { inputTokens: 5, outputTokens: 6, cacheReadInputTokens: 7, cacheCreationInputTokens: 8, costUSD: 0.25, costBasis: "other" },
+        },
+      });
+      expect(r.cost_basis).toBe("list");
+      expect(r.model_usage).toEqual({
+        a: { cost_usd: 0.5, input_tokens: 1, output_tokens: 2, cache_read_tokens: 3, cache_creation_tokens: 4 },
+        b: { cost_usd: 0.25, input_tokens: 5, output_tokens: 6, cache_read_tokens: 7, cache_creation_tokens: 8 },
+      });
+    });
+
+    it("turns strings, NaN, negatives and non-finite values into null", () => {
+      const r = build({
+        type: "result",
+        total_cost_usd: "0.5",
+        duration_api_ms: -5,
+        usage: {
+          input_tokens: Number.NaN,
+          output_tokens: Infinity,
+          cache_read_input_tokens: "12",
+          cache_creation_input_tokens: -1,
+          output_tokens_details: { thinking_tokens: null },
+        },
+        modelUsage: {
+          good: { costUSD: 1, inputTokens: "x", outputTokens: -2, cacheReadInputTokens: Number.NaN, cacheCreationInputTokens: 4, costBasis: 7 },
+          bad: "nope",
+          worse: null,
+        },
+      });
+      expect(r.input_tokens).toBeNull();
+      expect(r.output_tokens).toBeNull();
+      expect(newFields(r)).toEqual({
+        cost_usd: null,
+        cost_basis: null,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        thinking_tokens: null,
+        api_duration_s: null,
+        model_usage: {
+          good: { cost_usd: 1, input_tokens: null, output_tokens: null, cache_read_tokens: null, cache_creation_tokens: 4 },
+        },
+      });
+      expect(JSON.stringify(r)).not.toMatch(/NaN|undefined/);
+    });
+
+    it("has all-null new fields and empty model_usage with no result message", () => {
+      expect(newFields(build(null))).toEqual({
+        cost_usd: null,
+        cost_basis: null,
+        cache_read_tokens: null,
+        cache_creation_tokens: null,
+        thinking_tokens: null,
+        api_duration_s: null,
+        model_usage: {},
+      });
+    });
   });
 });

@@ -41,3 +41,22 @@ test("sign in, add an application, see it in the list", async ({ page }) => {
 
   await expect(page.getByRole("list", { name: "Applications" })).toContainText(company);
 });
+
+test("shows the application count above the list", async ({ page }) => {
+  // Same gating as the sign-in test above: a missing password fails in CI and skips locally.
+  if (process.env.CI) {
+    expect(password, "E2E_PASSWORD must be set in CI").toBeTruthy();
+  } else {
+    test.skip(!password, "E2E_PASSWORD not set");
+  }
+
+  await page.goto("/login");
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Applications" })).toBeVisible();
+
+  const countLabel = page.getByText(/^\d+ applications?$/);
+  await expect(countLabel).toBeVisible();
+  const listed = await page.getByRole("list", { name: "Applications" }).getByRole("listitem").count();
+  await expect(countLabel).toHaveText(`${listed} ${listed === 1 ? "application" : "applications"}`);
+});

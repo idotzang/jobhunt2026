@@ -267,7 +267,7 @@ describe("buildRunRecord", () => {
           b: { inputTokens: 5, outputTokens: 6, cacheReadInputTokens: 7, cacheCreationInputTokens: 8, costUSD: 0.25, costBasis: "other" },
         },
       });
-      expect(r.cost_basis).toBe("list");
+      expect(r.cost_basis).toBe("mixed");
       expect(r.model_usage).toEqual({
         a: { cost_usd: 0.5, input_tokens: 1, output_tokens: 2, cache_read_tokens: 3, cache_creation_tokens: 4 },
         b: { cost_usd: 0.25, input_tokens: 5, output_tokens: 6, cache_read_tokens: 7, cache_creation_tokens: 8 },
@@ -318,6 +318,44 @@ describe("buildRunRecord", () => {
         api_duration_s: null,
         model_usage: {},
       });
+    });
+
+    it("keeps zero values as numbers, not null", () => {
+      const r = build({
+        type: "result",
+        total_cost_usd: 0,
+        duration_api_ms: 0,
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens_details: { thinking_tokens: 0 } },
+        modelUsage: { m: { costUSD: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costBasis: "list" } },
+      });
+      expect(newFields(r)).toEqual({
+        cost_usd: 0,
+        cost_basis: "list",
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        thinking_tokens: 0,
+        api_duration_s: 0,
+        model_usage: { m: { cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0 } },
+      });
+    });
+
+    it("rejects booleans and numeric-looking strings", () => {
+      const r = build({ type: "result", total_cost_usd: true, modelUsage: { m: { costUSD: "1.5" }, n: { costUSD: true } } });
+      expect(r.cost_usd).toBeNull();
+      expect(r.model_usage.m.cost_usd).toBeNull();
+      expect(r.model_usage.n.cost_usd).toBeNull();
+    });
+
+    it("uses the shared basis when all models agree, null when none is given", () => {
+      expect(build({ type: "result", modelUsage: { a: { costBasis: "list" }, b: { costBasis: "list" } } }).cost_basis).toBe("list");
+      expect(build({ type: "result", modelUsage: { a: { costUSD: 1 } } }).cost_basis).toBeNull();
+    });
+
+    it("skips a __proto__ model key", () => {
+      const modelUsage = JSON.parse('{"__proto__":{"costUSD":1},"ok":{"costUSD":2}}');
+      const r = build({ type: "result", modelUsage });
+      expect(Object.keys(r.model_usage)).toEqual(["ok"]);
+      expect(Object.getPrototypeOf(r.model_usage)).toBe(Object.prototype);
     });
   });
 });

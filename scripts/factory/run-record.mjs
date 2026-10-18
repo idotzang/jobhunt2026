@@ -54,6 +54,7 @@ function buildModelUsage(modelUsage) {
   const out = {};
   if (!modelUsage || typeof modelUsage !== "object" || Array.isArray(modelUsage)) return out;
   for (const [model, u] of Object.entries(modelUsage)) {
+    if (model === "__proto__") continue;
     if (!u || typeof u !== "object" || Array.isArray(u)) continue;
     out[model] = {
       cost_usd: round(num(u.costUSD), 6),
@@ -72,8 +73,12 @@ export function buildRunRecord({ executionLog, env, now }) {
   const pr = toInt(env.PR);
   const mode = env.MODE === undefined || env.MODE === "" ? "build" : env.MODE;
   const outcome = KNOWN_MODES.has(mode) ? classifyOutcome(result, env.CONCLUSION, { pr, mode }) : "failed";
-  const firstUsage = Object.values(result?.modelUsage && typeof result.modelUsage === "object" ? result.modelUsage : {})[0];
-  const costBasis = firstUsage && typeof firstUsage.costBasis === "string" ? firstUsage.costBasis : null;
+  const bases = new Set(
+    Object.values(result?.modelUsage && typeof result.modelUsage === "object" ? result.modelUsage : {})
+      .map((u) => u?.costBasis)
+      .filter((b) => typeof b === "string"),
+  );
+  const costBasis = bases.size === 0 ? null : bases.size === 1 ? [...bases][0] : "mixed";
   return {
     run_id: env.GITHUB_RUN_ID ?? null,
     run_attempt: toInt(env.GITHUB_RUN_ATTEMPT),

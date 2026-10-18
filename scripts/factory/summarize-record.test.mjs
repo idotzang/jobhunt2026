@@ -25,7 +25,7 @@ describe("summarizeRecord", () => {
 
   it("shows n/a for null or missing values", () => {
     expect(summarizeRecord({ run_id: null, outcome: "failed", turns: null, cost_usd: null })).toBe(
-      "Run n/a · n/a n/a · n/a · failed · n/a turns · n/as · cost ≈ n/a (list price, notional — billed to the subscription) · tokens in/out/cache-read/cache-write = n/a/n/a/n/a/n/a",
+      "Run n/a · n/a n/a · n/a · failed · n/a turns · n/a · cost ≈ n/a (list price, notional — billed to the subscription) · tokens in/out/cache-read/cache-write = n/a/n/a/n/a/n/a",
     );
   });
 
@@ -36,5 +36,37 @@ describe("summarizeRecord", () => {
 
   it("treats NaN and strings as n/a", () => {
     expect(summarizeRecord({ ...record, cost_usd: Number.NaN, turns: "x" })).toContain("n/a turns · 48s · cost ≈ n/a");
+  });
+
+  describe("markdown safety", () => {
+    const hostile = summarizeRecord({
+      ...record,
+      model: "evil\n# heading\n![](http://x/p.png)",
+      skill: "<img src=x>",
+      outcome: "a`b|c *d* [e](f) _g_ ~h~",
+      run_id: "x".repeat(500),
+      mode: "  tab\there \r\n ",
+    });
+
+    it("stays on a single bounded line", () => {
+      expect(hostile).not.toMatch(/[\r\n\t]/);
+      expect(hostile.length).toBeLessThan(700);
+    });
+
+    it("keeps no markdown metacharacters from the hostile values", () => {
+      const untrusted = hostile.split(" · ").slice(0, 4).join(" · ");
+      expect(untrusted).not.toMatch(/[`|<>\[\]()*#!~]/);
+      expect(untrusted).not.toMatch(/(^|[^A-Za-z0-9])_|_([^A-Za-z0-9]|$)/);
+    });
+
+    it("caps each value at 64 characters", () => {
+      expect(hostile).toContain(`Run ${"x".repeat(64)} ·`);
+      expect(hostile).not.toContain("x".repeat(65));
+    });
+
+    it("keeps legitimate identifiers intact", () => {
+      expect(summarizeRecord(record)).toContain("pr_opened");
+      expect(summarizeRecord(record)).toContain("claude-sonnet-5-5");
+    });
   });
 });

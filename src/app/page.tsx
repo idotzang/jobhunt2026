@@ -1,12 +1,10 @@
-import { addApplication } from "@/features/applications/actions";
+import { AddApplicationForm } from "@/features/applications/add-application-form";
 import { applicationCountLabel } from "@/features/applications/count";
 import { listApplications } from "@/features/applications/repository";
 import { requireSession } from "@/lib/session";
 
-export default async function Home({ searchParams }: PageProps<"/">) {
+export default async function Home() {
   await requireSession();
-  const { error } = await searchParams;
-  const message = typeof error === "string" ? error : undefined;
   const apps = await listApplications();
   const today = new Date().toISOString().slice(0, 10);
 
@@ -14,20 +12,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
     <main className="mx-auto max-w-2xl space-y-8 p-8">
       <h1 className="text-2xl font-semibold">Applications</h1>
 
-      <form action={addApplication} className="grid gap-3">
-        <input name="company" aria-label="Company" placeholder="Company" required className="rounded border p-2" />
-        <input name="role" aria-label="Role" placeholder="Role" required className="rounded border p-2" />
-        <input name="link" type="url" aria-label="Link" placeholder="Job link (optional)" className="rounded border p-2" />
-        <input name="appliedOn" type="date" aria-label="Applied on" required defaultValue={today} className="rounded border p-2" />
-        {message && (
-          <p role="alert" className="text-red-600">
-            {message}
-          </p>
-        )}
-        <button type="submit" className="rounded bg-black p-2 text-white">
-          Add application
-        </button>
-      </form>
+      <AddApplicationForm today={today} />
 
       <p className="text-gray-500">{applicationCountLabel(apps.length)}</p>
 

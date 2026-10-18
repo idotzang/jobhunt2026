@@ -1,3 +1,3 @@
 export function addedBanner(company: string): string {
-  return company;
+  return `Added ${company}`;
 }

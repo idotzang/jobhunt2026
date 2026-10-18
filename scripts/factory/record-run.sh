@@ -56,8 +56,14 @@ record="$(node scripts/factory/run-record.mjs)" || { warn "could not build the r
 # Summary first, so it exists even if the push below never succeeds.
 # A backtick in a value would close the code fence, so escape it (` is still valid JSON).
 safe_record="$(printf '%s\n' "$record" | sed 's/`/\\u0060/g')"
+# The human-readable line is best-effort: if it cannot be built, the JSON-only summary still goes out.
+human="$(printf '%s' "$record" | node scripts/factory/summarize-record.mjs 2>/dev/null | sed 's/`/\\u0060/g')" || human=""
 {
   echo "### Factory run"
+  if [ -n "$human" ]; then
+    echo "$human"
+    echo
+  fi
   echo '```json'
   echo "$safe_record"
   echo '```'

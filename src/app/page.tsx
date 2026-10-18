@@ -1,4 +1,5 @@
 import { addApplication } from "@/features/applications/actions";
+import { applicationCountLabel } from "@/features/applications/count";
 import { listApplications } from "@/features/applications/repository";
 import { requireSession } from "@/lib/session";
 
@@ -27,6 +28,8 @@ export default async function Home({ searchParams }: PageProps<"/">) {
           Add application
         </button>
       </form>
+
+      <p className="text-gray-500">{applicationCountLabel(apps.length)}</p>
 
       {apps.length === 0 ? (
         <p>No applications yet.</p>

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const password = process.env.E2E_PASSWORD ?? process.env.APP_PASSWORD;
 
@@ -40,6 +40,71 @@ test("sign in, add an application, see it in the list", async ({ page }) => {
   await page.getByRole("button", { name: "Add application" }).click();
 
   await expect(page.getByRole("list", { name: "Applications" })).toContainText(company);
+});
+
+async function signIn(page: Page) {
+  await page.goto("/login");
+  await page.getByLabel("Password").fill(password!);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Applications" })).toBeVisible();
+}
+
+test("adding an application shows an 'Added' banner and clears the form except the date", async ({ page }) => {
+  if (process.env.CI) {
+    expect(password, "E2E_PASSWORD must be set in CI").toBeTruthy();
+  } else {
+    test.skip(!password, "E2E_PASSWORD not set");
+  }
+  const company = `Banner ${Date.now()}`;
+  const today = new Date().toISOString().slice(0, 10);
+
+  await signIn(page);
+  await page.getByLabel("Company").fill(company);
+  await page.getByLabel("Role").fill("Staff Engineer");
+  await page.getByLabel("Link").fill("https://acme.com/jobs/1");
+  await page.getByRole("button", { name: "Add application" }).click();
+
+  await expect(page.getByRole("status")).toHaveText(`Added ${company}`);
+  await expect(page.getByLabel("Company")).toHaveValue("");
+  await expect(page.getByLabel("Role")).toHaveValue("");
+  await expect(page.getByLabel("Link")).toHaveValue("");
+  await expect(page.getByLabel("Applied on")).toHaveValue(today);
+});
+
+test("the 'Added' banner is gone after a reload", async ({ page }) => {
+  if (process.env.CI) {
+    expect(password, "E2E_PASSWORD must be set in CI").toBeTruthy();
+  } else {
+    test.skip(!password, "E2E_PASSWORD not set");
+  }
+  const company = `Reload ${Date.now()}`;
+
+  await signIn(page);
+  await page.getByLabel("Company").fill(company);
+  await page.getByLabel("Role").fill("Staff Engineer");
+  await page.getByRole("button", { name: "Add application" }).click();
+  await expect(page.getByRole("status")).toHaveText(`Added ${company}`);
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Applications" })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveCount(0);
+});
+
+test("a missing company shows the validation error and no 'Added' banner", async ({ page }) => {
+  if (process.env.CI) {
+    expect(password, "E2E_PASSWORD must be set in CI").toBeTruthy();
+  } else {
+    test.skip(!password, "E2E_PASSWORD not set");
+  }
+
+  await signIn(page);
+  // Whitespace passes the browser's `required` check but is trimmed to empty on the server.
+  await page.getByLabel("Company").fill("   ");
+  await page.getByLabel("Role").fill("Staff Engineer");
+  await page.getByRole("button", { name: "Add application" }).click();
+
+  await expect(page.locator("main").getByRole("alert")).toHaveText("Company is required");
+  await expect(page.getByRole("status")).toHaveCount(0);
 });
 
 test("shows the application count above the list", async ({ page }) => {

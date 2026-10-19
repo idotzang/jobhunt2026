@@ -5,6 +5,7 @@ import {
   parseIndex,
   parsePlan,
   planBranchEpic,
+  haltedIds,
   readyIds,
   renderChildBody,
   renderIndex,
@@ -180,11 +181,16 @@ describe("ready set", () => {
     expect(run(chain, [[1, open()], [2, open()]], 1, 1)).toEqual(["b"]);
     expect(doneIds(chain, index, new Map([[1, open()]]), 1)).toEqual(["a"]);
   });
+  it("frees the slot of a done child still labelled ai-build", () => {
+    expect(run(chain, [[1, open(["ai-build"])], [2, open()]], 1, 1)).toEqual(["b"]);
+  });
   it("counts a stuck child as in flight", () => {
     expect(run(chain, [[1, open(["ai-build", "needs-human"])], [2, open()]], 1)).toEqual([]);
   });
   it("does not treat not-planned closes as done", () => {
     const np = { state: "closed", labels: [], stateReason: "not_planned" };
-    expect(run(chain, [[1, np], [2, open()]], 2)).not.toContain("b");
+    const issues = [[1, np], [2, open()]];
+    expect(run(chain, issues, 2)).toEqual([]);
+    expect(haltedIds(chain, index, new Map(issues))).toEqual(["a"]);
   });
 });

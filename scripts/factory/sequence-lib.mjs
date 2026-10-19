@@ -126,7 +126,7 @@ export function renderChildBody(child, ctx) {
 export function renderIndex(epic, entries, doneIds) {
   const done = new Set(doneIds);
   const lines = entries.map(
-    (e) => `- [${done.has(e.id) ? "x" : " "}] #${e.number} ${e.title} <!-- id:${e.id} -->`,
+    (e) => `- [${done.has(e.id) ? "x" : " "}] #${e.number} ${String(e.title).replace(/\s+/g, " ").trim()} <!-- id:${e.id} -->`,
   );
   return [INDEX_MARKER, `Plan for #${epic}`, "", ...lines].join("\n");
 }
@@ -161,15 +161,24 @@ function isInFlight(issue) {
   return issue?.state === "open" && issue.labels.includes("ai-build");
 }
 
+export function haltedIds(children, index, issues, justMerged) {
+  const done = new Set(doneIds(children, index, issues, justMerged));
+  return children
+    .filter((c) => !done.has(c.id) && issues.get(index.get(c.id))?.state === "closed")
+    .map((c) => c.id);
+}
+
 export function readyIds({ children, index, issues, maxInFlight, justMerged }) {
   const done = new Set(doneIds(children, index, issues, justMerged));
-  const inFlight = children.filter((c) => isInFlight(issues.get(index.get(c.id)))).length;
+  const stateOf = (c) => issues.get(index.get(c.id));
+  const inFlight = children.filter((c) => !done.has(c.id) && isInFlight(stateOf(c))).length;
   const slots = Math.max(0, maxInFlight - inFlight);
   return children
     .filter(
       (c) =>
         !done.has(c.id) &&
-        !isInFlight(issues.get(index.get(c.id))) &&
+        !isInFlight(stateOf(c)) &&
+        stateOf(c)?.state !== "closed" &&
         (c.depends_on ?? []).every((d) => done.has(d)),
     )
     .slice(0, slots)

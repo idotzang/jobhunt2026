@@ -1,0 +1,104 @@
+# Deletes Neon preview branches that the Vercel<->Neon integration creates
+# (one `preview/<git branch>` per preview deployment) but never removes. The
+# Neon free plan allows 10 branches; at the limit, preview deployments fail and
+# the required `e2e` status never appears.
+#
+# Trust model: `pull_request_target` runs trusted code from the DEFAULT branch
+# with secrets available. We never check out or run PR code, and the PR job
+# only runs for PRs targeting the default branch, with the checkout pinned to
+# it. Only the PR's branch NAME crosses the boundary: it is passed through an
+# env var, validated in scripts/neon/select.mjs, and matched exactly against
+# `preview/<name>`. `main`, `dev`, default and protected Neon branches are
+# never deleted.
+#
+# NEON_API_KEY is account-wide (Neon keys have no scopes; a leak could delete
+# production). It lives in the GitHub Environment `neon`, which is restricted
+# to the `main` branch: a workflow run from any other branch could carry a
+# modified cleanup script, so it must not be able to read the key. Both jobs
+# therefore use `environment: neon`, and the sweep job also refuses to run
+# from any ref but the default branch. Use this key ONLY in this workflow.
+#
+# If the key is project-scoped it cannot list projects: set the repository
+# variable NEON_PROJECT_ID (not a secret) and the script uses it directly.
+name: Neon cleanup
+
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would be deleted
+        type: boolean
+        default: true
+
+# Least privilege by default; each job grants only what it needs.
+permissions: {}
+
+jobs:
+  delete-pr-branch:
+    name: delete-pr-branch
+    if: >-
+      github.event_name == 'pull_request_target'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.base.ref == github.event.repository.default_branch
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: neon
+    permissions:
+      contents: read
+    steps:
+      # Pin to the default branch; never the PR head.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Delete the Neon preview branch of this PR
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          # Always verified against GET /projects/{id}: a wrong id variable aborts.
+          NEON_PROJECT_NAME: neon-cinereous-coin
+        run: node scripts/neon/cleanup.mjs pr
+
+  sweep:
+    name: sweep
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: neon
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Collect live git refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Fail closed: any gh error aborts here (set -e), and an empty
+          # result aborts too, so we can never sweep against an empty set.
+          gh api "repos/$REPO/branches" --paginate --jq '.[].name' > "$RUNNER_TEMP/branches.txt"
+          gh api "repos/$REPO/pulls" --paginate --jq '.[].head.ref' > "$RUNNER_TEMP/pulls.txt"
+          cat "$RUNNER_TEMP/branches.txt" "$RUNNER_TEMP/pulls.txt" | sed '/^$/d' > "$RUNNER_TEMP/live-refs.txt"
+          if [ ! -s "$RUNNER_TEMP/live-refs.txt" ]; then
+            echo "no live refs found; refusing to sweep" >&2
+            exit 1
+          fi
+      - name: Sweep orphaned Neon preview branches
+        env:
+          LIVE_REFS_FILE: ${{ runner.temp }}/live-refs.txt
+          DRY_RUN: ${{ inputs.dry_run }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          # Always verified against GET /projects/{id}: a wrong id variable aborts.
+          NEON_PROJECT_NAME: neon-cinereous-coin
+        run: node scripts/neon/cleanup.mjs sweep

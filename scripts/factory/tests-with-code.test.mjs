@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   checkProtectedPaths,
+  checkPlanPrScope,
   checkTestsWithCode,
   isEntrypoint,
   isSourceFile,
@@ -102,5 +103,33 @@ describe("checkProtectedPaths", () => {
 
   it("does not match lookalike prefixes", () => {
     expect(checkProtectedPaths([".githubx/a.yml", "scripts/other.mjs"], { hasFactoryLabel: false }).ok).toBe(true);
+  });
+});
+
+describe("checkPlanPrScope", () => {
+  const ref = "ai/plan-17-status";
+
+  it("allows plan PRs that change only docs/specs and docs/architecture.md", () => {
+    expect(checkPlanPrScope(["docs/specs/status.md", "docs/architecture.md"], ref).ok).toBe(true);
+  });
+
+  it("blocks plan PRs that change anything else, naming the files", () => {
+    const src = checkPlanPrScope(["src/app/page.tsx"], ref);
+    expect(src.ok).toBe(false);
+    expect(src.message).toContain("src/app/page.tsx");
+    const wf = checkPlanPrScope([".github/workflows/x.yml"], ref);
+    expect(wf.ok).toBe(false);
+    expect(wf.message).toContain(".github/workflows/x.yml");
+  });
+
+  it("blocks lookalike paths", () => {
+    expect(checkPlanPrScope(["docs/specs-x/a.md"], ref).ok).toBe(false);
+    expect(checkPlanPrScope(["docs/architecture.md.bak"], ref).ok).toBe(false);
+  });
+
+  it("does not apply to other branches", () => {
+    expect(checkPlanPrScope(["src/a.ts"], "ai/issue-3-x").ok).toBe(true);
+    expect(checkPlanPrScope(["src/a.ts"], "feature/x").ok).toBe(true);
+    expect(checkPlanPrScope(["src/a.ts"], undefined).ok).toBe(true);
   });
 });

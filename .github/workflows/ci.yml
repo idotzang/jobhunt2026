@@ -29,6 +29,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
           SKIP: ${{ contains(github.event.pull_request.labels.*.name, 'skip-tests-check') }}
           FACTORY_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'factory') }}
         run: |

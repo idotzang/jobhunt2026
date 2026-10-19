@@ -56,6 +56,23 @@ export function checkProtectedPaths(files, { hasFactoryLabel }) {
   };
 }
 
+// Pattern is hard-coded (not imported from sequence-lib.mjs): this file must stay standalone.
+const PLAN_REF = /^ai\/plan-\d+-/;
+
+export function checkPlanPrScope(files, headRef) {
+  if (headRef === undefined || !PLAN_REF.test(headRef)) {
+    return { ok: true, message: "plan-pr-scope: not a plan PR" };
+  }
+  const outside = files.filter((f) => !(f.startsWith("docs/specs/") || f === "docs/architecture.md"));
+  if (outside.length === 0) return { ok: true, message: "plan-pr-scope: ok" };
+  return {
+    ok: false,
+    message:
+      `Plan PR changes files outside docs/specs/ and docs/architecture.md:\n  ${outside.join("\n  ")}\n` +
+      `A plan PR may only change specs and the architecture doc.`,
+  };
+}
+
 function git(args) {
   return splitNul(execFileSync("git", args, { encoding: "utf8" }));
 }
@@ -73,6 +90,9 @@ if (isEntrypoint(process.argv[1], import.meta.url)) {
   });
   console.log(protectedResult.message);
 
+  const planResult = checkPlanPrScope(allFiles, process.env.HEAD_REF);
+  console.log(planResult.message);
+
   let testsOk = true;
   if (process.env.SKIP === "true") {
     console.log("tests-with-code: skipped by label");
@@ -81,5 +101,5 @@ if (isEntrypoint(process.argv[1], import.meta.url)) {
     console.log(result.message);
     testsOk = result.ok;
   }
-  process.exit(protectedResult.ok && testsOk ? 0 : 1);
+  process.exit(protectedResult.ok && planResult.ok && testsOk ? 0 : 1);
 }

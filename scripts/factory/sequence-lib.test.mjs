@@ -153,6 +153,11 @@ describe("rendering", () => {
     expect(out).toContain("- [ ] #32 Second");
     expect(parseIndex(out)).toEqual(new Map([["a", 31], ["b", 32]]));
   });
+  it("renders a placeholder for an entry without a number; parseIndex skips it", () => {
+    const out = renderIndex(7, [{ id: "a", title: "A", number: 5 }, { id: "b", title: "B" }], []);
+    expect(out).toContain("- [ ] #? B <!-- id:b -->");
+    expect(parseIndex(out)).toEqual(new Map([["a", 5]]));
+  });
   it("parses a comment without the marker as empty", () => {
     expect(parseIndex("hello").size).toBe(0);
   });

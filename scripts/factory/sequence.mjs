@@ -62,16 +62,39 @@ export function handleEvent(event, { gh, readFile, env }) {
   if (childNumber !== null) return onChildClosed(childNumber);
   return ignored;
 
+  function loadIssues(children, index) {
+    const issues = new Map();
+    for (const c of children) {
+      const num = index.get(c.id);
+      if (num === undefined) continue;
+      const v = json(["issue", "view", String(num), ...R, "--json", "state,stateReason,labels"]);
+      issues.set(num, {
+        state: String(v.state).toLowerCase(),
+        stateReason: v.stateReason,
+        labels: (v.labels ?? []).map((l) => l.name ?? l),
+      });
+    }
+    return issues;
+  }
+
+  function patchIndex(commentId, text) {
+    withFile(text, (f) =>
+      gh(["api", "-X", "PATCH", `repos/${env.repo}/issues/comments/${commentId}`, "-F", `body=@${f}`]),
+    );
+  }
+
+  // Resumable: the index comment is posted first (children without numbers), then
+  // updated after every creation. A re-run creates only the children still missing.
   function onPlanMerge(epic) {
-    if (findIndex(epic)) return ignored;
-    const files = json(["api", `repos/${env.repo}/pulls/${pr.number}/files`, "--paginate", "--slurp"])
-      .flat()
-      .map((f) => f.filename)
-      .filter((f) => SPEC_PATH.test(f));
     const invalid = (msg) => {
       comment(epic, `Plan not applied, nothing was created:\n\n${msg}`);
       return { action: "invalid-plan" };
     };
+    let indexComment = findIndex(epic);
+    const files = json(["api", `repos/${env.repo}/pulls/${pr.number}/files`, "--paginate", "--slurp"])
+      .flat()
+      .map((f) => f.filename)
+      .filter((f) => SPEC_PATH.test(f));
     if (files.length !== 1) return invalid(`expected exactly one docs/specs/*.md in the plan PR, found ${files.length}`);
     const specPath = files[0];
     let plan;
@@ -83,19 +106,28 @@ export function handleEvent(event, { gh, readFile, env }) {
     const errors = validatePlan(plan, { epic });
     if (errors.length) return invalid(errors.map((e) => `- ${e}`).join("\n"));
 
-    const entries = plan.children.map((child) => {
+    const existing = indexComment ? parseIndex(indexComment.body) : new Map();
+    const entries = plan.children.map((c) => ({ id: c.id, title: c.title, number: existing.get(c.id) }));
+    if (!indexComment) {
+      const out = comment(epic, renderIndex(epic, entries, []));
+      const id = /issuecomment-(\d+)/.exec(out)?.[1];
+      indexComment = id ? { id: Number(id) } : findIndex(epic);
+    }
+    for (const [i, child] of plan.children.entries()) {
+      if (entries[i].number !== undefined) continue;
       const body = renderChildBody(child, { epic, specPath });
       const out = withFile(body, (f) =>
         gh(["issue", "create", ...R, "--title", child.title, "--body-file", f, "--label", `model:${child.model}`]),
       );
-      return { id: child.id, title: child.title, number: Number(/(\d+)\s*$/.exec(out)[1]) };
-    });
-    comment(epic, renderIndex(epic, entries, []));
+      entries[i].number = Number(/(\d+)\s*$/.exec(out)[1]);
+      patchIndex(indexComment.id, renderIndex(epic, entries, []));
+    }
     const index = new Map(entries.map((e) => [e.id, e.number]));
-    const issues = new Map(entries.map((e) => [e.number, { state: "open", labels: [] }]));
+    const issues = loadIssues(plan.children, index);
     for (const id of readyIds({ children: plan.children, index, issues, maxInFlight: env.maxInFlight })) {
       addLabel(index.get(id), "ai-build");
     }
+    patchIndex(indexComment.id, renderIndex(epic, entries, doneIds(plan.children, index, issues)));
     return { action: "created" };
   }
 
@@ -118,24 +150,11 @@ export function handleEvent(event, { gh, readFile, env }) {
       return ignored;
     }
     const index = parseIndex(indexComment.body);
-    const issues = new Map();
-    for (const c of plan.children) {
-      const num = index.get(c.id);
-      if (num === undefined) continue;
-      const v = json(["issue", "view", String(num), ...R, "--json", "state,stateReason,labels"]);
-      issues.set(num, {
-        state: String(v.state).toLowerCase(),
-        stateReason: v.stateReason,
-        labels: (v.labels ?? []).map((l) => l.name ?? l),
-      });
-    }
+    const issues = loadIssues(plan.children, index);
     const done = doneIds(plan.children, index, issues, n);
     const entries = plan.children.map((c) => ({ id: c.id, title: c.title, number: index.get(c.id) }));
     const rendered = renderIndex(epic, entries, done);
-    const saveIndex = () =>
-      withFile(rendered, (f) =>
-        gh(["api", "-X", "PATCH", `repos/${env.repo}/issues/comments/${indexComment.id}`, "-F", `body=@${f}`]),
-      );
+    const saveIndex = () => patchIndex(indexComment.id, rendered);
 
     const halted = haltedIds(plan.children, index, issues, n);
     if (halted.length) {

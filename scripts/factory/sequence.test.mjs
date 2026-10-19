@@ -33,10 +33,10 @@ function makeFakeGh(world) {
     calls.push(args);
     const [a, b] = args;
     if (a === "api" && args[1] === `repos/${REPO}/pulls/${world.pr}/files`) {
-      return JSON.stringify(world.prFiles.map((filename) => ({ filename })));
+      return JSON.stringify([world.prFiles.map((filename) => ({ filename }))]);
     }
     if (a === "api" && /\/issues\/\d+\/comments$/.test(args[1])) {
-      return JSON.stringify(world.comments);
+      return JSON.stringify([world.comments]);
     }
     if (a === "api" && args.includes("PATCH")) {
       const id = Number(args.find((x) => /comments\/\d+$/.test(x)).split("/").pop());
@@ -62,8 +62,9 @@ function makeFakeGh(world) {
       return "";
     }
     if (a === "issue" && b === "comment") {
-      world.comments.push({ id: world.comments.length + 1, body: bodyOf(args), issue: Number(args[2]) });
-      return "";
+      const id = world.comments.length + 1;
+      world.comments.push({ id, body: bodyOf(args), issue: Number(args[2]) });
+      return `https://github.com/${REPO}/issues/${args[2]}#issuecomment-${id}\n`;
     }
     if (a === "issue" && b === "close") {
       world.closed.push(Number(args[2]));
@@ -80,6 +81,10 @@ function setup(overrides = {}, specText = good) {
   const world = { pr: 50, prFiles: [SPEC], comments: [], issues: {}, closed: [], files: {}, ...overrides };
   const fake = makeFakeGh(world);
   const gh = (args) => {
+    if (world.failOnce?.(args)) {
+      world.failOnce = null;
+      throw new Error("injected gh failure");
+    }
     const paths = [];
     const i = args.indexOf("--body-file");
     if (i !== -1) paths.push(args[i + 1]);
@@ -142,8 +147,9 @@ describe("plan merge", () => {
     const { world, gh, readFile } = setup();
     handleEvent(planEvent(), { gh, readFile, env });
     const before = creates(gh).length;
-    expect(handleEvent(planEvent(), { gh, readFile, env })).toEqual({ action: "ignored" });
+    expect(handleEvent(planEvent(), { gh, readFile, env })).toEqual({ action: "created" });
     expect(creates(gh)).toHaveLength(before);
+    expect(gh.calls.filter((c) => c.includes("ai-build"))).toHaveLength(1);
     expect(world.comments.filter((c) => c.body.startsWith("<!-- factory-epic-index -->"))).toHaveLength(1);
   });
 
@@ -165,6 +171,33 @@ describe("plan merge", () => {
     const { gh, readFile } = setup({ prFiles: ["docs/specs/a.md", "docs/specs/b.md"] });
     expect(handleEvent(planEvent(), { gh, readFile, env })).toEqual({ action: "invalid-plan" });
     expect(creates(gh)).toHaveLength(0);
+  });
+});
+
+describe("plan merge resume", () => {
+  it("re-run after a failed second create makes no duplicates", () => {
+    const { world, gh, readFile } = setup();
+    let seen = 0;
+    world.failOnce = (a) => a[0] === "issue" && a[1] === "create" && ++seen === 2;
+    expect(() => handleEvent(planEvent(), { gh, readFile, env })).toThrow("injected");
+    expect(indexComment(world).body).toContain("#100");
+    expect(indexComment(world).body).toContain("#? Second");
+    handleEvent(planEvent(), { gh, readFile, env });
+    expect(creates(gh)).toHaveLength(2); // one per child overall; the failed attempt created nothing
+    expect(Object.keys(world.issues)).toHaveLength(2);
+    expect(labelsOf(world, 100).filter((l) => l === "ai-build")).toHaveLength(1);
+    expect(indexComment(world).body).not.toContain("#?");
+  });
+
+  it("re-run after a failed ai-build label labels without creating", () => {
+    const { world, gh, readFile } = setup();
+    world.failOnce = (a) => a.includes("--add-label");
+    expect(() => handleEvent(planEvent(), { gh, readFile, env })).toThrow("injected");
+    const before = creates(gh).length;
+    handleEvent(planEvent(), { gh, readFile, env });
+    expect(creates(gh)).toHaveLength(before);
+    expect(labelsOf(world, 100)).toContain("ai-build");
+    expect(labelsOf(world, 101)).not.toContain("ai-build");
   });
 });
 

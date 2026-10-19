@@ -126,7 +126,7 @@ export function renderChildBody(child, ctx) {
 export function renderIndex(epic, entries, doneIds) {
   const done = new Set(doneIds);
   const lines = entries.map(
-    (e) => `- [${done.has(e.id) ? "x" : " "}] #${e.number} ${String(e.title).replace(/\s+/g, " ").trim()} <!-- id:${e.id} -->`,
+    (e) => `- [${done.has(e.id) ? "x" : " "}] #${e.number ?? "?"} ${String(e.title).replace(/\s+/g, " ").trim()} <!-- id:${e.id} -->`,
   );
   return [INDEX_MARKER, `Plan for #${epic}`, "", ...lines].join("\n");
 }

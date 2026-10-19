@@ -1,0 +1,93 @@
+# Deletes Neon preview branches that the Vercel<->Neon integration creates
+# (one `preview/<git branch>` per preview deployment) but never removes. The
+# Neon free plan allows 10 branches; at the limit, preview deployments fail and
+# the required `e2e` status never appears.
+#
+# Trust model: `pull_request_target` runs trusted code from the DEFAULT branch
+# with secrets available. We never check out or run PR code. Only the PR's
+# branch NAME crosses the boundary: it is passed through an env var, validated
+# in scripts/neon/select.mjs, and matched exactly against `preview/<name>`.
+# `main`, `dev`, default and protected Neon branches are never deleted.
+#
+# NEON_API_KEY is account-wide (Neon keys have no scopes; a leak could delete
+# production). It must ONLY ever be used by this workflow, on the steps below.
+name: Neon cleanup
+
+on:
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would be deleted
+        type: boolean
+        default: true
+
+# Least privilege by default; each job grants only what it needs.
+permissions: {}
+
+concurrency:
+  group: neon-cleanup
+  cancel-in-progress: false
+
+jobs:
+  delete-pr-branch:
+    name: delete-pr-branch
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # pull_request_target checks out the default branch; never the PR head.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Delete the Neon preview branch of this PR
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+        run: node scripts/neon/cleanup.mjs pr
+
+  sweep:
+    name: sweep
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Collect live git refs
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          branches=$(gh api "repos/$REPO/branches" --paginate --jq '.[].name')
+          pulls=$(gh api "repos/$REPO/pulls" --paginate --jq '.[].head.ref')
+          refs=$(printf '%s\n%s\n' "$branches" "$pulls" | sed '/^$/d')
+          if [ -z "$refs" ]; then
+            echo "no live refs found; refusing to sweep" >&2
+            exit 1
+          fi
+          {
+            echo "LIVE_REFS<<EOF_LIVE_REFS"
+            echo "$refs"
+            echo "EOF_LIVE_REFS"
+          } >> "$GITHUB_OUTPUT"
+      - name: Sweep orphaned Neon preview branches
+        env:
+          LIVE_REFS: ${{ steps.refs.outputs.LIVE_REFS }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+        run: node scripts/neon/cleanup.mjs sweep

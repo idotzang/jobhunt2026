@@ -276,9 +276,11 @@ describe("NEON_PROJECT_ID", () => {
     expect(s.lines.join("\n")).toContain("project name mismatch");
     expect(deletes(s)).toHaveLength(0);
   });
-  it("name is not checked when NEON_PROJECT_NAME is unset", async () => {
+  it("defaults the expected name to neon-cinereous-coin", async () => {
     const s = setup({ projects: proj, branches, detailName: "something-else" });
-    expect(await go(s, penv())).toBe(0);
+    expect(await go(s, penv())).toBe(1);
+    expect(s.lines.join("\n")).toContain("project name mismatch");
+    expect(deletes(s)).toHaveLength(0);
   });
 });
 

@@ -59,6 +59,8 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          # Always verified against GET /projects/{id}: a wrong id variable aborts.
+          NEON_PROJECT_NAME: neon-cinereous-coin
         run: node scripts/neon/cleanup.mjs pr
 
   sweep:
@@ -97,4 +99,6 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+          # Always verified against GET /projects/{id}: a wrong id variable aborts.
+          NEON_PROJECT_NAME: neon-cinereous-coin
         run: node scripts/neon/cleanup.mjs sweep

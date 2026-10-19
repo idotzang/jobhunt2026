@@ -59,7 +59,7 @@ async function projectFromId(ctx, id, expectedName) {
   const res = await api(ctx, `/projects/${id}`);
   if (!res.ok) await fail(ctx, res, "get project");
   const project = (await res.json()).project;
-  if (expectedName && project?.name !== expectedName) throw new Abort("project name mismatch");
+  if (project?.name !== expectedName) throw new Abort("project name mismatch");
   return { id };
 }
 
@@ -154,7 +154,7 @@ export async function run({
     if (!key) throw new Abort("NEON_API_KEY is not set");
 
     const project = env.NEON_PROJECT_ID
-      ? await projectFromId(ctx, env.NEON_PROJECT_ID, env.NEON_PROJECT_NAME)
+      ? await projectFromId(ctx, env.NEON_PROJECT_ID, env.NEON_PROJECT_NAME || "neon-cinereous-coin")
       : await findProject(ctx, env.NEON_PROJECT_NAME || "neon-cinereous-coin");
     const res = await api(ctx, `/projects/${project.id}/branches`);
     if (!res.ok) await fail(ctx, res, "list branches");

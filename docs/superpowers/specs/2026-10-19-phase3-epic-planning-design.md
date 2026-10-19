@@ -37,17 +37,14 @@ The owner files one epic issue and the factory delivers it as several small PRs 
 
 ## Plan file format
 
-`docs/specs/<epic-slug>.md`: prose spec for people and the worker, plus one fenced block tagged `factory-plan` that the script parses (the only machine-read part):
+`docs/specs/<epic-slug>.md`: prose spec for people and the worker, one fenced block tagged `factory-plan` that the script parses, and one `## Child: <id>` markdown section per child (its body becomes the issue body: acceptance criteria and proving tests). The block is JSON, not YAML, because the repo has no YAML parser and adds no dependencies **(call, changed during planning)**:
 
-```yaml
-epic: 17                  # epic issue number
-children:
-  - id: status-field      # unique slug
-    title: Add a status field to applications
-    model: sonnet         # haiku | sonnet | opus, chosen by the planner
-    depends_on: []        # ids of other children
-    body: |               # becomes the issue body (acceptance criteria + proving tests)
-      ...
+```json
+{ "epic": 17,
+  "children": [
+    { "id": "status-field", "title": "Add a status field to applications",
+      "model": "sonnet", "depends_on": [] }
+  ] }
 ```
 
 The script validates before creating anything: 2-6 children, unique ids, known models, `depends_on` refers to existing ids and is acyclic, `epic` matches the PR's epic. A validation failure comments on the epic and creates nothing. The planner chooses the model per child **(owner)** and the plan shows it, so `/replan` can change it.

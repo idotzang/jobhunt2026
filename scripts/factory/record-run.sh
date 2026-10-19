@@ -5,6 +5,7 @@ set -uo pipefail
 
 BRANCH=factory-log
 LOGFILE=runs.jsonl
+VERCEL_JSON='{"git":{"deploymentEnabled":false},"ignoreCommand":"exit 0"}'
 LOGDIR=""
 CREATED_LOCAL=0
 
@@ -42,8 +43,12 @@ append_once() {
     return 3
   fi
 
+  # Vercel reads vercel.json from the pushed commit, so every factory-log commit carries its own.
+  if [ "$(cat "$LOGDIR/vercel.json" 2>/dev/null)" != "$VERCEL_JSON" ]; then
+    printf '%s\n' "$VERCEL_JSON" > "$LOGDIR/vercel.json" || return 1
+  fi
   echo "$record" >> "$LOGDIR/$LOGFILE"
-  git -C "$LOGDIR" add "$LOGFILE" || return 1
+  git -C "$LOGDIR" add "$LOGFILE" vercel.json || return 1
   git -C "$LOGDIR" -c user.name=factory-bot -c user.email=factory-bot@users.noreply.github.com \
     commit --quiet --no-verify --no-gpg-sign \
     -m "run ${GITHUB_RUN_ID:-local}: ${SKILL:-unknown} #${ISSUE:-?}" || return 1

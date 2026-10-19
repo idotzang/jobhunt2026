@@ -1,2 +1,4 @@
 # Fake fixture secret used by the transcript-redaction unit tests (not a real credential).
 1a12763b9dc6dbff4b3f83a62cbff38fe0d8d28f:scripts/factory/redact-transcript.test.mjs:generic-api-key:11
+# Fake API-key fixture used by the Neon cleanup unit tests (not a real credential).
+525bbcc97ff1e556affaa2b53e1d94e5379ed7fb:scripts/neon/cleanup.test.mjs:generic-api-key:4

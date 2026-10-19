@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { handleEvent } from "./sequence.mjs";
+import { handleEvent, parseMaxInFlight } from "./sequence.mjs";
 
 const REPO = "o/r";
 const env = { repo: REPO, owner: "o", maxInFlight: 1 };
@@ -36,7 +36,7 @@ function makeFakeGh(world) {
       return JSON.stringify([world.prFiles.map((filename) => ({ filename }))]);
     }
     if (a === "api" && /\/issues\/\d+\/comments$/.test(args[1])) {
-      return JSON.stringify([world.comments]);
+      return JSON.stringify([world.comments.filter((c) => c.issue === Number(args[1].split("/")[4]))]);
     }
     if (a === "api" && args.includes("PATCH")) {
       const id = Number(args.find((x) => /comments\/\d+$/.test(x)).split("/").pop());
@@ -63,7 +63,7 @@ function makeFakeGh(world) {
     }
     if (a === "issue" && b === "comment") {
       const id = world.comments.length + 1;
-      world.comments.push({ id, body: bodyOf(args), issue: Number(args[2]) });
+      world.comments.push({ id, body: bodyOf(args), issue: Number(args[2]), user: { login: "o" } });
       return `https://github.com/${REPO}/issues/${args[2]}#issuecomment-${id}\n`;
     }
     if (a === "issue" && b === "close") {
@@ -94,11 +94,12 @@ function setup(overrides = {}, specText = good) {
     return fake(args);
   };
   gh.calls = fake.calls;
+  let current = specText;
   const readFile = (p) => {
     if (p !== SPEC) throw new Error(`no file ${p}`);
-    return specText;
+    return current;
   };
-  return { world, gh, readFile };
+  return { world, gh, readFile, setSpec: (t) => (current = t) };
 }
 
 const planEvent = (over = {}) => ({
@@ -198,6 +199,90 @@ describe("plan merge resume", () => {
     expect(creates(gh)).toHaveLength(before);
     expect(labelsOf(world, 100)).toContain("ai-build");
     expect(labelsOf(world, 101)).not.toContain("ai-build");
+  });
+});
+
+const good3 = spec(
+  [
+    { id: "a", title: "First", model: "sonnet", depends_on: [] },
+    { id: "b", title: "Second", model: "haiku", depends_on: ["a"] },
+    { id: "c", title: "Third", model: "haiku", depends_on: ["b"] },
+  ],
+  ["a", "b", "c"],
+);
+
+describe("hardening", () => {
+  it("ignores an index comment authored by someone else", () => {
+    const { world, gh, readFile } = setup();
+    world.comments.push({ id: 900, body: "<!-- factory-epic-index -->\n- [ ] #1 x <!-- id:a -->", issue: 7, user: { login: "evil" } });
+    expect(handleEvent(planEvent(), { gh, readFile, env })).toEqual({ action: "created" });
+    expect(creates(gh)).toHaveLength(2);
+  });
+
+  describe("child PRs", () => {
+    function planned(text = good) {
+      const s = setup({}, text);
+      handleEvent(planEvent(), { gh: s.gh, readFile: s.readFile, env });
+      return s;
+    }
+    const noWrites = (gh, from) => gh.calls.slice(from).filter((c) => (c[0] === "issue" && c[1] !== "view") || c.includes("PATCH"));
+
+    it("uses the last footer even when the body quotes a marker earlier", () => {
+      const { world, gh, readFile } = planned();
+      world.issues[100].body = `quote <!-- factory-child: 99/x -->\n\n${world.issues[100].body}`;
+      expect(handleEvent(childEvent(100), { gh, readFile, env })).toEqual({ action: "advanced" });
+      expect(labelsOf(world, 101)).toContain("ai-build");
+    });
+
+    it("ignores a footer id missing from the index, merged or unmerged", () => {
+      const { world, gh, readFile } = planned();
+      world.issues[100].body = world.issues[100].body.replace("7/a", "7/zzz");
+      const from = gh.calls.length;
+      expect(handleEvent(childEvent(100), { gh, readFile, env })).toEqual({ action: "ignored" });
+      expect(handleEvent(childEvent(100, { merged: false, merged_by: null }), { gh, readFile, env })).toEqual({ action: "ignored" });
+      expect(noWrites(gh, from)).toHaveLength(0);
+    });
+
+    it("ignores a footer whose index number is another issue", () => {
+      const { world, gh, readFile } = planned();
+      world.issues[100].body = world.issues[100].body.replace("7/a", "7/b");
+      const from = gh.calls.length;
+      expect(handleEvent(childEvent(100), { gh, readFile, env })).toEqual({ action: "ignored" });
+      expect(noWrites(gh, from)).toHaveLength(0);
+    });
+
+    it("does not close the epic when the plan was edited to drop a child", () => {
+      const { world, gh, readFile, setSpec } = planned(good3);
+      setSpec(good);
+      const from = gh.calls.length;
+      expect(handleEvent(childEvent(100), { gh, readFile, env })).toEqual({ action: "ignored" });
+      expect(noWrites(gh, from)).toHaveLength(0);
+      expect(world.closed).toEqual([]);
+    });
+
+    it("ignores when a plan child is missing from the index", () => {
+      const { gh, readFile, setSpec } = planned(good);
+      setSpec(good3);
+      const from = gh.calls.length;
+      expect(handleEvent(childEvent(100), { gh, readFile, env })).toEqual({ action: "ignored" });
+      expect(noWrites(gh, from)).toHaveLength(0);
+    });
+
+    it("ignores when the edited plan is invalid", () => {
+      const { gh, readFile, setSpec } = planned(good);
+      setSpec(cyclic);
+      const from = gh.calls.length;
+      expect(handleEvent(childEvent(100), { gh, readFile, env })).toEqual({ action: "ignored" });
+      expect(noWrites(gh, from)).toHaveLength(0);
+    });
+  });
+
+  it("clamps MAX_IN_FLIGHT to at least 1", () => {
+    expect(parseMaxInFlight(undefined)).toBe(1);
+    expect(parseMaxInFlight("0")).toBe(1);
+    expect(parseMaxInFlight("-3")).toBe(1);
+    expect(parseMaxInFlight("abc")).toBe(1);
+    expect(parseMaxInFlight("2")).toBe(2);
   });
 });
 

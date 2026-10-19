@@ -30,6 +30,10 @@ function isEntrypoint(argv1, metaUrl) {
 const INDEX_MARKER = "<!-- factory-epic-index -->";
 const SPEC_PATH = /^docs\/specs\/[^/]+\.md$/;
 
+export function parseMaxInFlight(value) {
+  return Math.max(1, Number(value ?? "1") || 1);
+}
+
 export function handleEvent(event, { gh, readFile, env }) {
   const pr = event?.pull_request;
   const ignored = { action: "ignored" };
@@ -52,7 +56,7 @@ export function handleEvent(event, { gh, readFile, env }) {
     withFile(text, (f) => gh(["issue", "comment", String(n), ...R, "--body-file", f]));
   const findIndex = (epic) => {
     const pages = json(["api", `repos/${env.repo}/issues/${epic}/comments`, "--paginate", "--slurp"]);
-    return pages.flat().find((c) => String(c.body ?? "").split(/\r?\n/)[0].trim() === INDEX_MARKER);
+    return pages.flat().find((c) => c.user?.login === env.owner && String(c.body ?? "").split(/\r?\n/)[0].trim() === INDEX_MARKER);
   };
   const addLabel = (n, label) => gh(["issue", "edit", String(n), ...R, "--add-label", label]);
 
@@ -133,23 +137,30 @@ export function handleEvent(event, { gh, readFile, env }) {
 
   function onChildClosed(n) {
     const issue = json(["issue", "view", String(n), ...R, "--json", "body"]);
-    const m = /<!-- factory-child: (\d+)\/(.+?) -->/.exec(issue.body ?? "");
+    // The footer is always last; a planner-written body may quote marker text earlier.
+    const m = /<!-- factory-child: (\d+)\/(.+?) -->\s*$/.exec(issue.body ?? "");
     const spec = /^Spec: (\S+)$/m.exec(issue.body ?? "");
     if (!m || !spec || !SPEC_PATH.test(spec[1])) return ignored;
     const epic = Number(m[1]);
+    const indexComment = findIndex(epic);
+    if (!indexComment) return ignored;
+    const index = parseIndex(indexComment.body);
+    if (index.get(m[2]) !== n) return ignored;
     if (!pr.merged) {
       comment(epic, `Sequence paused at #${n}: its PR was closed without merging.`);
       return { action: "paused" };
     }
-    const indexComment = findIndex(epic);
-    if (!indexComment) return ignored;
     let plan;
     try {
       plan = parsePlan(readFile(spec[1]));
     } catch {
       return ignored;
     }
-    const index = parseIndex(indexComment.body);
+    if (validatePlan(plan, { epic }).length) return ignored;
+    const planIds = new Set(plan.children.map((c) => c.id));
+    if (plan.children.some((c) => !index.has(c.id)) || [...index.keys()].some((id) => !planIds.has(id))) {
+      return ignored;
+    }
     const issues = loadIssues(plan.children, index);
     const done = doneIds(plan.children, index, issues, n);
     const entries = plan.children.map((c) => ({ id: c.id, title: c.title, number: index.get(c.id) }));
@@ -181,7 +192,7 @@ if (isEntrypoint(process.argv[1], import.meta.url)) {
   const env = {
     repo: process.env.REPO,
     owner: process.env.OWNER,
-    maxInFlight: Number(process.env.MAX_IN_FLIGHT ?? "1") || 1,
+    maxInFlight: parseMaxInFlight(process.env.MAX_IN_FLIGHT),
   };
   const gh = (args) => execFileSync("gh", args, { encoding: "utf8" });
   const { action } = handleEvent(event, { gh, readFile: (p) => readFileSync(p, "utf8"), env });

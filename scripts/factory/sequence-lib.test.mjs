@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { childIssueFromRef, parsePlan, planBranchEpic, validatePlan } from "./sequence-lib.mjs";
+import {
+  childIssueFromRef,
+  doneIds,
+  parseIndex,
+  parsePlan,
+  planBranchEpic,
+  readyIds,
+  renderChildBody,
+  renderIndex,
+  validatePlan,
+} from "./sequence-lib.mjs";
 
 const FENCE = "```";
 
@@ -114,5 +124,67 @@ describe("refs", () => {
   it("extracts the child issue from issue branches", () => {
     expect(childIssueFromRef("ai/issue-31-add-field")).toBe(31);
     expect(childIssueFromRef("ai/plan-17-x")).toBeNull();
+  });
+});
+
+describe("rendering", () => {
+  it("renders a child body with header, spec and footer", () => {
+    const out = renderChildBody(
+      { id: "status-field", title: "T", model: "sonnet", depends_on: [], body: "Do the thing." },
+      { epic: 17, specPath: "docs/specs/status.md" },
+    );
+    expect(out).toMatch(/^Part of #17\n/);
+    expect(out).toContain("Spec: docs/specs/status.md");
+    expect(out).toContain("Do the thing.");
+    expect(out.endsWith("<!-- factory-child: 17/status-field -->")).toBe(true);
+  });
+  it("round-trips the index", () => {
+    const out = renderIndex(
+      17,
+      [
+        { id: "a", number: 31, title: "First" },
+        { id: "b", number: 32, title: "Second" },
+      ],
+      ["a"],
+    );
+    expect(out.split("\n")[0]).toBe("<!-- factory-epic-index -->");
+    expect(out).toContain("- [x] #31 First");
+    expect(out).toContain("- [ ] #32 Second");
+    expect(parseIndex(out)).toEqual(new Map([["a", 31], ["b", 32]]));
+  });
+  it("parses a comment without the marker as empty", () => {
+    expect(parseIndex("hello").size).toBe(0);
+  });
+});
+
+describe("ready set", () => {
+  const chain = [{ id: "a", depends_on: [] }, { id: "b", depends_on: ["a"] }];
+  const index = new Map([["a", 1], ["b", 2], ["c", 3]]);
+  const open = (labels = []) => ({ state: "open", labels });
+  const done = { state: "closed", labels: [], stateReason: "completed" };
+  const run = (children, issues, maxInFlight, justMerged) =>
+    readyIds({ children, index, issues: new Map(issues), maxInFlight, justMerged });
+
+  it("walks a chain", () => {
+    expect(run(chain, [[1, open()], [2, open()]], 1)).toEqual(["a"]);
+    expect(run(chain, [[1, open(["ai-build"])], [2, open()]], 1)).toEqual([]);
+    expect(run(chain, [[1, done], [2, open()]], 1)).toEqual(["b"]);
+  });
+  it("respects free slots in plan order", () => {
+    const kids = [{ id: "a", depends_on: [] }, { id: "c", depends_on: [] }];
+    const issues = [[1, open(["ai-build"])], [3, open()]];
+    expect(run(kids, issues, 2)).toEqual(["c"]);
+    expect(run(kids, issues, 1)).toEqual([]);
+  });
+  it("treats justMerged as done", () => {
+    expect(run(chain, [[1, open()], [2, open()]], 1, 1)).toEqual(["b"]);
+    expect(doneIds(chain, index, new Map([[1, open()]]), 1)).toEqual(["a"]);
+  });
+  it("counts a stuck child as in flight", () => {
+    expect(run(chain, [[1, open(["ai-build", "needs-human"])], [2, open()]], 1)).toEqual([]);
+  });
+  it("does not treat not-planned closes as done", () => {
+    const np = { state: "closed", labels: [], stateReason: "not_planned" };
+    expect(run(chain, [[1, np], [2, open()]], 2)).not.toContain("b");
   });
 });

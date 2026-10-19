@@ -108,3 +108,70 @@ export function planBranchEpic(ref) {
 export function childIssueFromRef(ref) {
   return refNumber(ref, "issue");
 }
+
+const INDEX_MARKER = "<!-- factory-epic-index -->";
+
+export function renderChildBody(child, ctx) {
+  return [
+    `Part of #${ctx.epic}`,
+    "",
+    `Spec: ${ctx.specPath}`,
+    "",
+    child.body,
+    "",
+    `<!-- factory-child: ${ctx.epic}/${child.id} -->`,
+  ].join("\n");
+}
+
+export function renderIndex(epic, entries, doneIds) {
+  const done = new Set(doneIds);
+  const lines = entries.map(
+    (e) => `- [${done.has(e.id) ? "x" : " "}] #${e.number} ${e.title} <!-- id:${e.id} -->`,
+  );
+  return [INDEX_MARKER, `Plan for #${epic}`, "", ...lines].join("\n");
+}
+
+export function parseIndex(commentBody) {
+  const map = new Map();
+  const lines = String(commentBody ?? "").split(/\r?\n/);
+  if (lines[0]?.trim() !== INDEX_MARKER) return map;
+  for (const line of lines) {
+    const m = /^- \[[ xX]\] #(\d+) .*<!-- id:(.+?) -->\s*$/.exec(line);
+    if (m) map.set(m[2], Number(m[1]));
+  }
+  return map;
+}
+
+function isCompleted(issue) {
+  return (
+    issue?.state === "closed" && String(issue.stateReason ?? "").toLowerCase() === "completed"
+  );
+}
+
+export function doneIds(children, index, issues, justMerged) {
+  return children
+    .filter((c) => {
+      const n = index.get(c.id);
+      return n !== undefined && (n === justMerged || isCompleted(issues.get(n)));
+    })
+    .map((c) => c.id);
+}
+
+function isInFlight(issue) {
+  return issue?.state === "open" && issue.labels.includes("ai-build");
+}
+
+export function readyIds({ children, index, issues, maxInFlight, justMerged }) {
+  const done = new Set(doneIds(children, index, issues, justMerged));
+  const inFlight = children.filter((c) => isInFlight(issues.get(index.get(c.id)))).length;
+  const slots = Math.max(0, maxInFlight - inFlight);
+  return children
+    .filter(
+      (c) =>
+        !done.has(c.id) &&
+        !isInFlight(issues.get(index.get(c.id))) &&
+        (c.depends_on ?? []).every((d) => done.has(d)),
+    )
+    .slice(0, slots)
+    .map((c) => c.id);
+}

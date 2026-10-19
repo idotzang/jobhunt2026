@@ -127,6 +127,13 @@ describe("checkPlanPrScope", () => {
     expect(checkPlanPrScope(["docs/architecture.md.bak"], ref).ok).toBe(false);
   });
 
+  it("matches plan refs exactly like planBranchEpic", () => {
+    expect(checkPlanPrScope(["src/a.ts"], "ai/plan-17").ok).toBe(false);
+    for (const r of ["ai/plan-x-foo", "xai/plan-1-a", ""]) {
+      expect(checkPlanPrScope(["src/a.ts"], r).ok).toBe(true);
+    }
+  });
+
   it("does not apply to other branches", () => {
     expect(checkPlanPrScope(["src/a.ts"], "ai/issue-3-x").ok).toBe(true);
     expect(checkPlanPrScope(["src/a.ts"], "feature/x").ok).toBe(true);

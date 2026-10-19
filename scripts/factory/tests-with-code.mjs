@@ -57,7 +57,7 @@ export function checkProtectedPaths(files, { hasFactoryLabel }) {
 }
 
 // Pattern is hard-coded (not imported from sequence-lib.mjs): this file must stay standalone.
-const PLAN_REF = /^ai\/plan-\d+-/;
+const PLAN_REF = /^ai\/plan-\d+(?:-|$)/;
 
 export function checkPlanPrScope(files, headRef) {
   if (headRef === undefined || !PLAN_REF.test(headRef)) {

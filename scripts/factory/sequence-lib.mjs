@@ -3,7 +3,10 @@ const PLAN_BLOCK = /^```factory-plan[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm;
 
 function childSection(markdown, id) {
   const lines = markdown.split(/\r?\n/);
-  const start = lines.findIndex((l) => l.trim() === `## Child: ${id}`);
+  const heading = `## Child: ${id}`;
+  const starts = lines.filter((l) => l.trim() === heading).length;
+  if (starts > 1) throw new Error(`duplicate section "${heading}"`);
+  const start = lines.findIndex((l) => l.trim() === heading);
   if (start === -1) return null;
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
@@ -30,13 +33,15 @@ export function parsePlan(markdown) {
     throw new Error("factory-plan block must be an object with a children array");
   }
   const children = raw.children.map((c) => {
+    // Malformed children pass through untouched; validatePlan reports them.
+    if (!c || typeof c !== "object" || typeof c.id !== "string") return c;
     const body = childSection(markdown, c?.id);
     if (body === null) throw new Error(`missing section "## Child: ${c?.id}"`);
     return {
       id: c.id,
       title: c.title,
       model: c.model,
-      depends_on: Array.isArray(c.depends_on) ? c.depends_on : [],
+      depends_on: c.depends_on ?? [],
       body,
     };
   });
@@ -53,15 +58,36 @@ export function validatePlan(plan, opts) {
     errors.push(`child count must be 2-6, got ${children.length}`);
   }
   const ids = new Set();
-  for (const c of children) {
+  const wellFormed = [];
+  for (const [i, c] of children.entries()) {
+    if (!c || typeof c !== "object" || Array.isArray(c)) {
+      errors.push(`child #${i + 1} must be an object`);
+      continue;
+    }
+    let ok = true;
+    if (typeof c.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(c.id)) {
+      errors.push(`child #${i + 1}: id must be kebab-case (lowercase letters, digits, hyphens)`);
+      ok = false;
+    }
+    if (typeof c.title !== "string" || c.title.trim() === "" || c.title.length > 256) {
+      errors.push(`child ${c.id}: title must be a non-empty string of at most 256 characters`);
+    }
+    if (c.body !== undefined && (typeof c.body !== "string" || c.body.length > 60000)) {
+      errors.push(`child ${c.id}: body must be a string of at most 60000 characters`);
+    }
+    if (!Array.isArray(c.depends_on ?? []) || (c.depends_on ?? []).some((d) => typeof d !== "string")) {
+      errors.push(`child ${c.id}: depends_on must be an array of child ids`);
+      ok = false;
+    }
     if (ids.has(c.id)) errors.push(`duplicate child id: ${c.id}`);
     ids.add(c.id);
     if (!VALID_MODELS.includes(c.model)) {
       errors.push(`child ${c.id}: invalid model "${c.model}" (use haiku, sonnet or opus)`);
     }
+    if (ok) wellFormed.push(c);
   }
-  let depsOk = true;
-  for (const c of children) {
+  let depsOk = wellFormed.length === children.length;
+  for (const c of wellFormed) {
     for (const d of c.depends_on ?? []) {
       if (!ids.has(d)) {
         errors.push(`child ${c.id}: unknown dependency "${d}"`);
@@ -69,7 +95,7 @@ export function validatePlan(plan, opts) {
       }
     }
   }
-  if (depsOk && hasCycle(children)) errors.push("dependency cycle detected");
+  if (depsOk && hasCycle(wellFormed)) errors.push("dependency cycle detected");
   return errors;
 }
 

@@ -59,6 +59,14 @@ describe("parsePlan", () => {
     const md = `${FENCE}factory-plan\n{not json\n${FENCE}\n`;
     expect(() => parsePlan(md)).toThrow(/factory-plan/);
   });
+  it("throws when a child section appears twice", () => {
+    const md = specFixture([child("first"), child("second")]) + "\n## Child: first\n\nagain\n";
+    expect(() => parsePlan(md)).toThrow(/duplicate/);
+  });
+  it("keeps a non-array depends_on raw", () => {
+    const md = specFixture([child("first", { depends_on: "second" }), child("second")]);
+    expect(parsePlan(md).children[0].depends_on).toBe("second");
+  });
   it("throws when a child has no section", () => {
     const md = specFixture([child("first"), child("second")]).replace("## Child: second", "## Other: second");
     expect(() => parsePlan(md)).toThrow(/Child: second/);
@@ -111,6 +119,27 @@ describe("validatePlan", () => {
     p.children[0].depends_on = ["a"];
     expect(errs(p)).toContain("cycle");
   });
+  it("rejects non-array or non-string depends_on", () => {
+    const p = ok();
+    p.children[1].depends_on = "a";
+    expect(errs(p)).toContain("depends_on");
+    const q = ok();
+    q.children[1].depends_on = [1];
+    expect(errs(q)).toContain("depends_on");
+  });
+  it("rejects malformed children", () => {
+    const bad = (mut) => {
+      const p = ok();
+      mut(p);
+      return errs(p);
+    };
+    expect(bad((p) => (p.children[0].id = 5))).toContain("id");
+    expect(bad((p) => (p.children[0].id = "Abc"))).toContain("id");
+    expect(bad((p) => (p.children[0].title = ""))).toContain("title");
+    expect(bad((p) => (p.children[0].title = "x".repeat(300)))).toContain("title");
+    expect(bad((p) => (p.children[0] = null))).toContain("object");
+    expect(bad((p) => (p.children[0].body = "x".repeat(60001)))).toContain("body");
+  });
   it("rejects an epic mismatch", () => {
     expect(validatePlan(ok(), { epic: 99 }).join("\n")).toContain("epic");
   });
@@ -121,6 +150,12 @@ describe("refs", () => {
     expect(planBranchEpic("ai/plan-17-status")).toBe(17);
     expect(planBranchEpic("ai/issue-3-x")).toBeNull();
     expect(planBranchEpic("feature/plan-1")).toBeNull();
+  });
+  it("handles near-miss plan refs", () => {
+    expect(planBranchEpic("ai/plan-17")).toBe(17);
+    expect(planBranchEpic("ai/plan-x-foo")).toBeNull();
+    expect(planBranchEpic("xai/plan-1-a")).toBeNull();
+    expect(planBranchEpic("")).toBeNull();
   });
   it("extracts the child issue from issue branches", () => {
     expect(childIssueFromRef("ai/issue-31-add-field")).toBe(31);

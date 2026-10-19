@@ -93,7 +93,7 @@ PR split: **PR A** = Tasks 1-4, **PR B** = Tasks 5-7, **PR C** = Task 8 (after t
   - `renderChildBody` output matches `/^Part of #17\n/`, contains `Spec: docs/specs/status.md`, ends with `<!-- factory-child: 17/status-field -->`.
   - `parseIndex(renderIndex(...))` round-trips ids to numbers; `parseIndex("hello")` is an empty map.
   - `readyIds` with maxInFlight 1 and a chain (b depends on a): nothing open → `["a"]`; a labelled `ai-build` and open → `[]`; a closed/completed → `["b"]`.
-  - independent child c is returned when a is closed, with `maxInFlight: 2` after b is labelled: `[]`... and with `maxInFlight: 2` and only a in flight: returns `["c"]` (plan order, up to the free slots).
+  - with `maxInFlight: 2`, a independent of c, and only a in flight (open, labelled): returns `["c"]` (plan order, up to the free slots); with `maxInFlight: 1` the same state returns `[]`.
   - **Review Focus 3:** `justMerged = number of a` with a still `open`: `b` is ready.
   - a stuck child (open, labelled `ai-build`, PR `needs-human`) keeps counting in flight: `[]`.
 - [ ] **Step 2: Run** the file. Expected: FAIL.

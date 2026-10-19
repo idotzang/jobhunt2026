@@ -55,6 +55,11 @@ describe("selectForPr", () => {
     expect(selectForPr([b("preview/x", { default: true })], "x")).toEqual([]);
     expect(selectForPr([b("preview/x", { protected: true })], "x")).toEqual([]);
   });
+  it("is case-sensitive on the preview/ prefix", () => {
+    const branches = [b("Preview/x"), b("PREVIEW/x")];
+    expect(selectForPr(branches, "x")).toEqual([]);
+    expect(selectOrphans(branches, [])).toEqual([]);
+  });
   it("never selects main or dev", () => {
     const branches = [b("main"), b("dev")];
     expect(selectForPr(branches, "main")).toEqual([]);

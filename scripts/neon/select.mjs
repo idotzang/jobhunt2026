@@ -15,14 +15,14 @@ export function previewBranchName(headRef) {
   return PREFIX + headRef;
 }
 
+// The `preview/` prefix check already excludes `main` and `dev` (they cannot
+// start with it), so there is no separate equality check for them.
 function deletable(branch) {
   return (
     branch &&
     typeof branch.name === "string" &&
     branch.name.startsWith(PREFIX) &&
     branch.name.length > PREFIX.length &&
-    branch.name !== "main" &&
-    branch.name !== "dev" &&
     branch.default !== true &&
     branch.protected !== true
   );

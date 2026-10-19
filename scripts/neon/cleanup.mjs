@@ -9,6 +9,7 @@ const MAX_RETRY_AFTER_MS = 10_000;
 const MAX_PAGES = 50;
 const BRANCH_ID = /^br-[A-Za-z0-9-]+$/;
 const PROJECT_ID = /^[A-Za-z0-9-]+$/;
+const CONFIGURED_PROJECT_ID = /^[a-z0-9]+(-[a-z0-9]+)+$/;
 const SAFE_NAME = /^preview\/[A-Za-z0-9._/-]{1,200}$/;
 
 class Abort extends Error {}
@@ -50,6 +51,18 @@ async function fail(ctx, res, what) {
   throw new Abort(`${what} failed: HTTP ${res.status} ${redact(body, ctx.key)}`);
 }
 
+async function projectFromId(ctx, id, expectedName) {
+  if (/^(br|ep)-/.test(id)) {
+    throw new Abort("invalid NEON_PROJECT_ID: that is a branch or endpoint id, not a project id");
+  }
+  if (!CONFIGURED_PROJECT_ID.test(id)) throw new Abort("invalid NEON_PROJECT_ID");
+  const res = await api(ctx, `/projects/${id}`);
+  if (!res.ok) await fail(ctx, res, "get project");
+  const project = (await res.json()).project;
+  if (expectedName && project?.name !== expectedName) throw new Abort("project name mismatch");
+  return { id };
+}
+
 async function findProject(ctx, name) {
   const matches = [];
   const seen = new Set();
@@ -58,7 +71,12 @@ async function findProject(ctx, name) {
     const qs = new URLSearchParams({ limit: "100" });
     if (cursor) qs.set("cursor", cursor);
     const res = await api(ctx, `/projects?${qs}`);
-    if (!res.ok) await fail(ctx, res, "list projects");
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        ctx.log("hint: key may be project-scoped; set the repository variable NEON_PROJECT_ID");
+      }
+      await fail(ctx, res, "list projects");
+    }
     const body = await res.json();
     const items = body.projects ?? [];
     for (const p of items) if (p.name === name) matches.push(p);
@@ -112,7 +130,7 @@ export async function run({
   fs = { readFileSync, appendFileSync },
 }) {
   const key = env.NEON_API_KEY;
-  const ctx = { key, fetchImpl, sleep };
+  const ctx = { key, fetchImpl, sleep, log };
   try {
     if (mode !== "pr" && mode !== "sweep") throw new Abort(`unknown mode "${mode}"`);
 
@@ -135,7 +153,9 @@ export async function run({
     }
     if (!key) throw new Abort("NEON_API_KEY is not set");
 
-    const project = await findProject(ctx, env.NEON_PROJECT_NAME || "neon-cinereous-coin");
+    const project = env.NEON_PROJECT_ID
+      ? await projectFromId(ctx, env.NEON_PROJECT_ID, env.NEON_PROJECT_NAME)
+      : await findProject(ctx, env.NEON_PROJECT_NAME || "neon-cinereous-coin");
     const res = await api(ctx, `/projects/${project.id}/branches`);
     if (!res.ok) await fail(ctx, res, "list branches");
     const branches = (await res.json()).branches ?? [];

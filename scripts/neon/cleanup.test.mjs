@@ -10,7 +10,7 @@ const resp = (status, body) => ({
   text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
 });
 
-function setup({ projects, branches, deleteStatus = 200, deleteBody = {}, deleteStatuses, projectsStatus = 200, branchesStatus = 200, retryAfter }) {
+function setup({ projects, branches, deleteStatus = 200, deleteBody = {}, deleteStatuses, projectsStatus = 200, branchesStatus = 200, retryAfter, detailStatus = 200, detailName = "neon-cinereous-coin" }) {
   const calls = [];
   const lines = [];
   const sleeps = [];
@@ -19,6 +19,9 @@ function setup({ projects, branches, deleteStatus = 200, deleteBody = {}, delete
     const method = opts.method ?? "GET";
     calls.push({ url: String(url), method, headers: opts.headers, signal: opts.signal });
     const u = new URL(url);
+    if (method === "GET" && /\/projects\/[^/]+$/.test(u.pathname)) {
+      return detailStatus !== 200 ? resp(detailStatus, "nope") : resp(200, { project: { id: u.pathname.split("/").pop(), name: detailName } });
+    }
     if (method === "GET" && u.pathname.endsWith("/projects")) {
       if (projectsStatus !== 200) return resp(projectsStatus, "nope");
       return resp(200, typeof projects === "function" ? projects(u) : { projects });
@@ -222,11 +225,60 @@ describe("project resolution", () => {
     expect(await run({ mode: "pr", env: { ...baseEnv, HEAD_REF: "ai/issue-5" }, fetchImpl: s.fetchImpl, log: s.log, sleep: s.sleep })).toBe(1);
     expect(s.calls.filter((c) => c.url.includes("/projects?"))).toHaveLength(1);
   });
+  it("403 on list projects prints the project-scoped key hint", async () => {
+    const s = setup({ projects: proj, branches, projectsStatus: 403 });
+    expect(await run({ mode: "pr", env: { ...baseEnv, HEAD_REF: "ai/issue-5" }, fetchImpl: s.fetchImpl, log: s.log, sleep: s.sleep })).toBe(1);
+    expect(s.lines.join("\n")).toContain("key may be project-scoped; set the repository variable NEON_PROJECT_ID");
+  });
   it("honours NEON_PROJECT_NAME", async () => {
     const s = setup({ projects: proj, branches });
     const code = await run({ mode: "pr", env: { ...baseEnv, HEAD_REF: "ai/issue-5", NEON_PROJECT_NAME: "other" }, fetchImpl: s.fetchImpl, log: s.log, sleep: s.sleep });
     expect(code).toBe(0);
     expect(s.calls.some((c) => c.url.includes("/projects/p2/branches"))).toBe(true);
+  });
+});
+
+describe("NEON_PROJECT_ID", () => {
+  const penv = (extra) => ({ ...baseEnv, HEAD_REF: "ai/issue-5", NEON_PROJECT_ID: "cool-fog-123456", ...extra });
+  const go = (s, e) => run({ mode: "pr", env: e, fetchImpl: s.fetchImpl, log: s.log, sleep: s.sleep });
+  it("uses the id directly and never lists projects", async () => {
+    const s = setup({ projects: proj, branches });
+    expect(await go(s, penv())).toBe(0);
+    expect(s.calls.some((c) => /\/projects\?/.test(c.url))).toBe(false);
+    expect(s.calls.some((c) => c.url.endsWith("/projects/cool-fog-123456"))).toBe(true);
+    expect(deletes(s)[0].url).toContain("/projects/cool-fog-123456/branches/");
+  });
+  it("empty NEON_PROJECT_ID falls back to listing by name", async () => {
+    const s = setup({ projects: proj, branches });
+    expect(await go(s, penv({ NEON_PROJECT_ID: "" }))).toBe(0);
+    expect(s.calls.some((c) => /\/projects\?/.test(c.url))).toBe(true);
+  });
+  it.each(["br-cool-fog-1", "ep-cool-fog-1", "Cool-Fog-1", "nohyphen", "a/../b-c", "a-b?x=1", "-a-b", "a--b"])("rejects %j before any request", async (id) => {
+    const s = setup({ projects: proj, branches });
+    expect(await go(s, penv({ NEON_PROJECT_ID: id }))).toBe(1);
+    expect(s.lines.join("\n")).toContain("invalid NEON_PROJECT_ID");
+    expect(s.calls).toHaveLength(0);
+  });
+  it("br-/ep- ids get a clear message", async () => {
+    const s = setup({ projects: proj, branches });
+    await go(s, penv({ NEON_PROJECT_ID: "br-cool-fog-1" }));
+    expect(s.lines.join("\n")).toContain("branch or endpoint id, not a project id");
+  });
+  it("404 on GET project aborts with no DELETE", async () => {
+    const s = setup({ projects: proj, branches, detailStatus: 404 });
+    expect(await go(s, penv())).toBe(1);
+    expect(s.lines.join("\n")).toContain("get project failed: HTTP 404");
+    expect(deletes(s)).toHaveLength(0);
+  });
+  it("name mismatch aborts when NEON_PROJECT_NAME is set", async () => {
+    const s = setup({ projects: proj, branches, detailName: "something-else" });
+    expect(await go(s, penv({ NEON_PROJECT_NAME: "neon-cinereous-coin" }))).toBe(1);
+    expect(s.lines.join("\n")).toContain("project name mismatch");
+    expect(deletes(s)).toHaveLength(0);
+  });
+  it("name is not checked when NEON_PROJECT_NAME is unset", async () => {
+    const s = setup({ projects: proj, branches, detailName: "something-else" });
+    expect(await go(s, penv())).toBe(0);
   });
 });
 

@@ -17,6 +17,9 @@
 # modified cleanup script, so it must not be able to read the key. Both jobs
 # therefore use `environment: neon`, and the sweep job also refuses to run
 # from any ref but the default branch. Use this key ONLY in this workflow.
+#
+# If the key is project-scoped it cannot list projects: set the repository
+# variable NEON_PROJECT_ID (not a secret) and the script uses it directly.
 name: Neon cleanup
 
 on:
@@ -55,6 +58,7 @@ jobs:
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
         run: node scripts/neon/cleanup.mjs pr
 
   sweep:
@@ -92,4 +96,5 @@ jobs:
           LIVE_REFS_FILE: ${{ runner.temp }}/live-refs.txt
           DRY_RUN: ${{ inputs.dry_run }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
         run: node scripts/neon/cleanup.mjs sweep

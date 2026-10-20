@@ -6,12 +6,12 @@ export const MODELS = {
   opus: "claude-opus-5-5",
 };
 
-export function pickModel(labels) {
+export function pickModel(labels, defaultTier = "sonnet") {
   const list = Array.isArray(labels) ? labels : [];
   for (const tier of ["opus", "sonnet", "haiku"]) {
     if (list.includes(`model:${tier}`)) return MODELS[tier];
   }
-  return MODELS.sonnet;
+  return Object.hasOwn(MODELS, defaultTier) ? MODELS[defaultTier] : MODELS.sonnet;
 }
 
 function labelsFromEnv(raw) {
@@ -24,5 +24,5 @@ function labelsFromEnv(raw) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  console.log(pickModel(labelsFromEnv(process.env.LABELS)));
+  console.log(pickModel(labelsFromEnv(process.env.LABELS), process.env.DEFAULT_TIER));
 }

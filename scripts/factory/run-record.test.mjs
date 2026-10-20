@@ -56,6 +56,14 @@ describe("classifyOutcome", () => {
   it("reports asked_human in fix mode without a PR", () => {
     expect(classifyOutcome(result, "success", { pr: null, mode: "fix" })).toBe("asked_human");
   });
+  it("reports pr_opened in plan and replan modes with a PR", () => {
+    expect(classifyOutcome(result, "success", { pr: 7, mode: "plan" })).toBe("pr_opened");
+    expect(classifyOutcome(result, "success", { pr: 7, mode: "replan" })).toBe("pr_opened");
+  });
+  it("reports asked_human in plan and replan modes without a PR", () => {
+    expect(classifyOutcome(result, "success", { pr: null, mode: "plan" })).toBe("asked_human");
+    expect(classifyOutcome(result, "success", { pr: null, mode: "replan" })).toBe("asked_human");
+  });
   it("reports failed when there is no result message, whatever the conclusion", () => {
     expect(classifyOutcome(null, "success", { pr: 7, mode: "build" })).toBe("failed");
     expect(classifyOutcome(null, "failure", {})).toBe("failed");
@@ -357,5 +365,18 @@ describe("buildRunRecord", () => {
       expect(Object.keys(r.model_usage)).toEqual(["ok"]);
       expect(Object.getPrototypeOf(r.model_usage)).toBe(Object.prototype);
     });
+  });
+});
+
+describe("buildRunRecord modes", () => {
+  const log = [{ type: "result", subtype: "success", is_error: false }];
+  const rec = (MODE, PR) =>
+    buildRunRecord({ executionLog: log, env: { CONCLUSION: "success", MODE, PR }, now: new Date(0) });
+  it("accepts plan and replan", () => {
+    expect(rec("plan", "9")).toMatchObject({ mode: "plan", outcome: "pr_opened" });
+    expect(rec("replan", "")).toMatchObject({ mode: "replan", outcome: "asked_human" });
+  });
+  it("still fails an unknown mode", () => {
+    expect(rec("review", "9").outcome).toBe("failed");
   });
 });

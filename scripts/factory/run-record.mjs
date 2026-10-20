@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const KNOWN_MODES = new Set(["build", "fix"]);
+const KNOWN_MODES = new Set(["build", "fix", "plan", "replan"]);
 
 // Keep every line that parses; blank or broken lines (e.g. a truncated tail) are skipped.
 // Trailing commas are stripped so lines from a pretty-printed array still parse.

@@ -9,8 +9,9 @@
 #     head branch, ai/plan-<epic>-...). If no epic can be resolved the job
 #     stops with a notice and posts nothing.
 #
-# Only one agent runs at a time: plan, replan and build runs share the
-# `factory-agent` concurrency group and queue behind each other.
+# Only one agent runs at a time: plan, replan, build and fix runs (factory-build
+# and factory-fix too) share the `factory-agent` concurrency group and queue
+# behind each other.
 #
 # `/replan` after the plan PR is merged is refused by the plan-epic skill.
 #
@@ -114,6 +115,11 @@ jobs:
             --model claude-opus-5-5
             --max-turns 60
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+      # The agent may leave a plan branch checked out; record-run.sh and the
+      # redactor must run from the default-branch tree.
+      - name: Restore default-branch tree
+        if: always()
+        run: git checkout --force --detach "$GITHUB_SHA" || true
       - name: Find plan PR
         id: pr
         if: always() && steps.resolve.outputs.epic != ''
@@ -128,6 +134,7 @@ jobs:
         if: always() && steps.resolve.outputs.epic != '' && hashFiles('scripts/factory/record-run.sh') != ''
         env:
           GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+          ISSUE: ${{ steps.resolve.outputs.epic }}
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           CONCLUSION: ${{ steps.claude.outputs.conclusion }}
           SKILL: plan-epic

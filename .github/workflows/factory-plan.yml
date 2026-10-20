@@ -13,6 +13,10 @@
 # and factory-fix too) share the `factory-agent` concurrency group and queue
 # behind each other.
 #
+# `startsWith` ignores case and also matches `/replanning`, so `/Replan` triggers
+# too. `/replan` must be at the very start of an issue or PR conversation
+# comment (review comments do not trigger).
+#
 # `/replan` after the plan PR is merged is refused by the plan-epic skill.
 #
 # Safety: comment bodies, titles and branch names are never interpolated into a

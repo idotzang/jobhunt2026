@@ -12,6 +12,8 @@ Design authority: `docs/superpowers/specs/2026-10-07-jobhunt-factory-design.md`.
 4. Owner opens the preview, merges the PR. Production deploys; `prod-health` curls `/api/health`.
 5. Every agent run appends one JSON line to `runs.jsonl` on the orphan branch `factory-log` (run id, skill, mode, model, turns, duration, tokens incl. cache/thinking, `cost_usd`, outcome, retries). `cost_usd` is the action's list-price estimate and is notional: the factory runs on a subscription token. Real consumption is only visible in Claude's `/usage`.
 
+Planning branch for bigger work: owner files an epic and adds `ai-plan` -> `factory-plan.yml` opens a plan PR (`ai/plan-<epic>-<slug>`, one spec in `docs/specs/` with a machine-readable child list) -> owner discusses with `/replan` comments -> **merging the plan PR is the approval** -> `factory-sequence.yml` creates the child issues and labels only the first `ai-build` -> each child merge labels the next ready child(ren) -> after the last child merges the epic is closed.
+
 ## Workflows (`.github/workflows/`)
 
 | File | Trigger | What it does |
@@ -21,6 +23,8 @@ Design authority: `docs/superpowers/specs/2026-10-07-jobhunt-factory-design.md`.
 | `security.yml` | PR, push to main | jobs `codeql`, `npm-audit` (prod deps, high), `gitleaks` |
 | `factory-build.yml` | owner adds `ai-build` | worker run, run record, redacted 7-day transcript artifact |
 | `factory-fix.yml` | `workflow_run` of CI/E2E/Security failing | fix loop (see above); protected-path diff gate before any agent runs |
+| `factory-plan.yml` | owner adds `ai-plan`; owner comment starting `/replan` | planner run (`plan-epic` skill): plan PR or revision |
+| `factory-sequence.yml` | `ai/*` PR closed (`pull_request_target`) | plain script `scripts/factory/sequence.mjs`, no AI: on plan merge creates children; on child merge labels next ready children, closes epic after the last; unmerged child close => "paused at #n" comment |
 | `neon-cleanup.yml` | PR closed; manual dispatch | deletes the PR's Neon branch `preview/<branch>`; manual sweep is dry-run by default |
 
 ## Branch protection on `main`
@@ -33,14 +37,15 @@ PRs touching `.github/`, `.claude/`, `scripts/factory/`, `CLAUDE.md`, `AGENTS.md
 
 ## Secrets, variables, environments (names only)
 
-- Repo secrets: `CLAUDE_CODE_OAUTH_TOKEN` (subscription), `FACTORY_GH_TOKEN` (fine-grained PAT; Contents/Issues/PRs RW; Commit statuses/Actions/Checks read; **no Workflows scope**), `E2E_PASSWORD` (preview-only password, equals Vercel's Preview `APP_PASSWORD`).
+- Repo variable `FACTORY_MAX_IN_FLIGHT` (optional, default 1): children built in parallel; raising it needs a look at the single pending run in the `factory-agent` group first.
+- Repo secrets: `CLAUDE_CODE_OAUTH_TOKEN` (subscription), `FACTORY_GH_TOKEN` (fine-grained PAT, must belong to the repo owner because the sequencer only trusts the epic index comment when the owner wrote it; Issues RW, Contents RW, PRs RW; Commit statuses/Actions/Checks read; **no Workflows scope**), `E2E_PASSWORD` (preview-only password, equals Vercel's Preview `APP_PASSWORD`).
 - Environment `neon` (deployment branch: `main` only): `NEON_API_KEY` (project-scoped). Repo variable `NEON_PROJECT_ID`.
 - Vercel env: `DATABASE_URL` (Neon integration, per-deployment DB branch for Previews), `APP_PASSWORD`, `SESSION_SECRET`.
 - Never paste secret values in chat; the owner runs `gh secret set` themselves.
 
 ## Labels
 
-`ai-build`, `ai-plan`, `factory`, `factory-report`, `proposed`, `model:haiku|sonnet|opus` (read from the label event payload: apply BEFORE `ai-build`), `skip-tests-check`, `fix-attempt-1`, `fix-attempt-2`, `needs-human`.
+`ai-build`, `ai-plan` (both must exist), `factory`, `factory-report`, `proposed`, `model:haiku|sonnet|opus` (must exist; read from the label event payload: apply BEFORE `ai-build`), `skip-tests-check`, `fix-attempt-1`, `fix-attempt-2`, `needs-human`.
 
 ## Hard-won facts
 
@@ -52,6 +57,17 @@ PRs touching `.github/`, `.claude/`, `scripts/factory/`, `CLAUDE.md`, `AGENTS.md
 - Vercel has had a one-off platform error ("unexpected error… transient"): redeploy the failed deployment.
 - Local development: Neon branch `dev` via `.env.local` (git-ignored); `npm run test:e2e` needs `APP_PASSWORD`/`E2E_PASSWORD`.
 
+## Epics (planning and sequencing)
+
+- `/replan` must be at the very start of an issue or PR conversation comment (epic or plan PR; not a review comment). It is refused after the plan merges. If a third agent run queues, it can be silently dropped: comment again.
+- To re-plan from scratch, remove and re-add `ai-plan`.
+- Plan PR closed unmerged: delete the `ai/plan-<n>-*` branch, then re-add `ai-plan`.
+- Hand-edited broken plan: after merge the sequencer comments "Plan not applied" and `/replan` no longer works. Open a PR from a branch `ai/plan-<epic>-<anything>` that fixes only that spec file and merge it; the sequencer re-runs and resumes.
+- Dropped or failed sequencer run: re-run the workflow (it is resumable).
+- Stuck child: merge it by hand, or remove and re-add `ai-build`.
+- "Sequence paused at #n" comment = that child's PR was closed unmerged.
+- The plan-PR scope gate keys only on the branch name `ai/plan-<n>[-...]`.
+
 ## Controller-session conventions
 
 - Superpowers flow: brainstorming -> writing-plans -> subagent-driven-development, one git worktree per task at `../jobhunt2026-<name>` with a `node_modules` symlink; `.superpowers/` is git-excluded scratch (ledger, briefs, reviews).
@@ -62,7 +78,7 @@ PRs touching `.github/`, `.claude/`, `scripts/factory/`, `CLAUDE.md`, `AGENTS.md
 
 Update this section at the end of each session (`/handoff`).
 
-- **Phase 3 (next):** `plan-epic` skill + `factory-plan.yml` (owner adds `ai-plan`) + child-issue creation/sequencing workflow (creates issues with the PAT, labels only the first child `ai-build`, next child after each merge); first real epic: application status tracking.
+- **Phase 3 (remaining):** first live epic "Application status tracking" as the acceptance run; CI validation of plan files on `ai/plan-*` PRs; bot identity/GitHub App (planner, sequencer and worker share the owner identity); run-record PR lookup for plan runs lacks a `createdAt` filter; planner `resolve` step runs after checkout/npm ci; single-pending-run risk grows with the sequencer and `/replan`.
 - **Phase 4:** `review-pr`, `factory-retro`, `factory-report` skills; then AI plan reviewer + auto-merge (spec §9).
 - **Security follow-ups:** the PAT can merge PRs (only skill text and owner attention prevent it; a hard barrier needs a bot identity/GitHub App + required approval); copy the transcript redactor to `$RUNNER_TEMP` before the agent step; make `.gitleaksignore` a protected path; unprotected files that affect agent runs (`package.json`, lockfile, `.npmrc`, `tsconfig`, `next.config.*`, `.gitattributes`).
 - **Quality follow-ups:** the fix loop's `e2e`-failure path has not been exercised live (only a `checks` failure); half-applied fix attempt (marker posted, label add fails) is silent; run records omit gate results; `record-run.sh` can duplicate a record if a push succeeded but reported failure.

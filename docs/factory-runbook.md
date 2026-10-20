@@ -47,6 +47,8 @@ PRs touching `.github/`, `.claude/`, `scripts/factory/`, `CLAUDE.md`, `AGENTS.md
 
 `ai-build`, `ai-plan` (both must exist), `factory`, `factory-report`, `proposed`, `model:haiku|sonnet|opus` (must exist; read from the label event payload: apply BEFORE `ai-build`), `skip-tests-check`, `fix-attempt-1`, `fix-attempt-2`, `needs-human`.
 
+`model:*` is also honoured on epic issues for the planner (read from the epic when the run starts; default opus for planning, sonnet for builds).
+
 ## Hard-won facts
 
 - Events caused by the default `GITHUB_TOKEN` do **not** trigger workflows. Anything that must start another workflow (e.g. a sequencer adding `ai-build`) has to act with `FACTORY_GH_TOKEN`. `factory-build.yml` additionally requires the label sender to be the repo owner and the issue author to be OWNER.

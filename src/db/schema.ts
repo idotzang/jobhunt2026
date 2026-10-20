@@ -7,6 +7,8 @@ export const applications = pgTable("applications", {
   link: text("link"),
   appliedOn: date("applied_on").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  status: text("status").notNull().default("applied"),
+  statusChangedAt: timestamp("status_changed_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export type Application = typeof applications.$inferSelect;

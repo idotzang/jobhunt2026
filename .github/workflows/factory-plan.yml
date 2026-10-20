@@ -117,6 +117,7 @@ jobs:
           GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
           EPIC: ${{ steps.resolve.outputs.epic }}
         run: |
+          # The inline LABELS below (epic's current labels) overrides the job-level LABELS env (event payload labels).
           if ! labels=$(gh api "repos/$GITHUB_REPOSITORY/issues/$EPIC" --jq '[.labels[].name]'); then
             echo "::warning::Could not read epic labels; using the default planner model."
             labels='[]'

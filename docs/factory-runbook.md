@@ -47,7 +47,7 @@ PRs touching `.github/`, `.claude/`, `scripts/factory/`, `CLAUDE.md`, `AGENTS.md
 
 `ai-build`, `ai-plan` (both must exist), `factory`, `factory-report`, `proposed`, `model:haiku|sonnet|opus` (must exist; read from the label event payload: apply BEFORE `ai-build`), `skip-tests-check`, `fix-attempt-1`, `fix-attempt-2`, `needs-human`.
 
-`model:*` is also honoured on epic issues for the planner (read from the epic when the run starts; default opus for planning, sonnet for builds).
+`model:*` is also honoured on epic issues for the planner (read from the epic when the run starts; default opus for planning, sonnet for builds). With several `model:*` labels the strongest wins (opus > sonnet > haiku). For a first plan the label must be on the epic BEFORE `ai-plan`; labels added later are ignored until a `/replan`.
 
 ## Hard-won facts
 

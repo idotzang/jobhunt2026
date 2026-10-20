@@ -47,6 +47,8 @@ describe("pickModel defaultTier", () => {
     expect(pickModel([], "gpt")).toBe(MODELS.sonnet);
     expect(pickModel([], undefined)).toBe(MODELS.sonnet);
     expect(pickModel([], "")).toBe(MODELS.sonnet);
+    expect(pickModel([], "toString")).toBe(MODELS.sonnet);
+    expect(pickModel([], "__proto__")).toBe(MODELS.sonnet);
   });
 });
 
